@@ -1,0 +1,40 @@
+# Исполнитель «Студии»: приложение на iPad запускает этот workflow через GitHub API (без Claude).
+name: studio-worker
+on:
+  workflow_dispatch:
+    inputs:
+      job:     { description: "prepare | export", required: true, default: prepare }
+      file:    { description: "prepare: имя оригинала в MEGA IN", required: false, default: "" }
+      project: { description: "export: проект JSON → gzip → base64", required: false, default: "" }
+      req:     { description: "id запроса (приложение находит по нему свой запуск)", required: false, default: "" }
+run-name: "${{ inputs.job }} ${{ inputs.file }} ${{ inputs.req }}"
+concurrency: { group: "studio-${{ inputs.job }}-${{ inputs.file }}${{ inputs.req }}", cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      MEGA_EMAIL: ${{ secrets.MEGA_EMAIL }}
+      MEGA_PASSWORD: ${{ secrets.MEGA_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: ffmpeg, MEGAcmd, python
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          # 10 бит 4:2:2 должен кодироваться — иначе не тратим время
+          ffmpeg -v error -f lavfi -i testsrc=s=64x64:d=0.1 -pix_fmt yuv422p10le -c:v libx265 -profile:v main422-10 -f null -
+          . /etc/os-release
+          curl -sSfL -o /tmp/mega.deb "https://mega.nz/linux/repo/xUbuntu_${VERSION_ID}/amd64/megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
+          sudo apt-get install -y -qq /tmp/mega.deb >/dev/null
+          pip install -q numpy faster-whisper
+      - uses: actions/cache@v4
+        with: { path: ~/.cache/huggingface, key: whisper-large-v3-turbo }
+      - name: run
+        env: { JOB: "${{ inputs.job }}", FILE: "${{ inputs.file }}", PROJECT: "${{ inputs.project }}" }
+        run: |
+          if [ "$JOB" = export ]; then
+            mkdir -p work && printf %s "$PROJECT" | base64 -d | gunzip > work/project.json
+            bash worker/run.sh export work/project.json
+          else
+            bash worker/run.sh prepare "$FILE"
+          fi
