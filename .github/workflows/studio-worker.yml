@@ -7,7 +7,7 @@ on:
       file:    { description: "prepare: имя оригинала в MEGA IN", required: false, default: "" }
       project: { description: "export: проект JSON → gzip → base64", required: false, default: "" }
       req:     { description: "id запроса (приложение находит по нему свой запуск)", required: false, default: "" }
-run-name: "${{ inputs.job }} ${{ inputs.file }} ${{ inputs.req }}"
+run-name: "${{ inputs.job }} ${{ inputs.req }}"
 concurrency: { group: "studio-${{ inputs.job }}-${{ inputs.file }}${{ inputs.req }}", cancel-in-progress: false }
 jobs:
   run:
@@ -32,6 +32,7 @@ jobs:
       - name: run
         env: { JOB: "${{ inputs.job }}", FILE: "${{ inputs.file }}", PROJECT: "${{ inputs.project }}" }
         run: |
+          [ -z "$FILE" ] || echo "::add-mask::$FILE"
           if [ "$JOB" = export ]; then
             mkdir -p work && printf %s "$PROJECT" | base64 -d | gunzip > work/project.json
             bash worker/run.sh export work/project.json

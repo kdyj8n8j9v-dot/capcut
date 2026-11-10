@@ -12,6 +12,13 @@ mega_up() { mega-mkdir -p "$2" 2>/dev/null || true; mega-put -c "$1" "$2/" >/dev
 
 case "$job" in
   prepare)
+    # имя можно дать без расширения или началом: ищем в IN (без учёта регистра)
+    arg=$(bash scripts/cloud.sh list | python3 -c 'import json,sys
+q=sys.argv[1].strip().lower(); n=[json.loads(l)["name"] for l in sys.stdin if l.strip()]
+m=[x for x in n if x.lower()==q] or [x for x in n if x.lower().rsplit(".",1)[0]==q] or [x for x in n if x.lower().startswith(q)] or [x for x in n if q in x.lower()]
+print(m[0] if m else "")' "$arg")
+    [ -n "$arg" ] || { echo "в MEGA «Исходники» нет такого файла" >&2; exit 1; }
+    echo "::add-mask::$arg"; echo "::add-mask::${arg%.*}"   # репозиторий публичный: имя ролика в журнале скрыто
     bash scripts/cloud.sh pull "$arg"
     src="originals/$arg"; [ -f "$src" ] || { echo "нет 10 бит 4:2:2 оригинала: $arg" >&2; exit 1; }
     stem="${arg%.*}"; mkdir -p work
