@@ -13,11 +13,18 @@ mega_up() { mega-mkdir -p "$2" 2>/dev/null || true; mega-put -c "$1" "$2/" >/dev
 case "$job" in
   prepare)
     # имя можно дать без расширения или началом: ищем в IN (без учёта регистра)
-    arg=$(bash scripts/cloud.sh list | python3 -c 'import json,sys
-q=sys.argv[1].strip().lower(); n=[json.loads(l)["name"] for l in sys.stdin if l.strip()]
-m=[x for x in n if x.lower()==q] or [x for x in n if x.lower().rsplit(".",1)[0]==q] or [x for x in n if x.lower().startswith(q)] or [x for x in n if q in x.lower()]
-print(m[0] if m else "")' "$arg")
-    [ -n "$arg" ] || { echo "в MEGA «Исходники» нет такого файла" >&2; exit 1; }
+    q="$arg"
+    arg=$(bash scripts/cloud.sh list | python3 worker/find.py "$q")
+    if [ -z "$arg" ]; then
+      echo "в MEGA «$IN» нет файла с таким именем (видео в папке: $(bash scripts/cloud.sh list | wc -l))" >&2
+      # подсказка без имён (журнал публичный): в каких папках MEGA лежит похожее имя и с каким расширением
+      w=$(python3 -c 'import sys;print(max(sys.argv[1].split(),key=len))' "$q")
+      mega-find / --pattern="*$w*" 2>/dev/null | python3 -c 'import sys,os
+for l in sys.stdin:
+    l=l.strip()
+    if l: print("  похожее имя есть в папке:", os.path.dirname(l) or "/", "· расширение:", os.path.splitext(l)[1] or "нет")' >&2 || true
+      exit 1
+    fi
     echo "::add-mask::$arg"; echo "::add-mask::${arg%.*}"   # репозиторий публичный: имя ролика в журнале скрыто
     bash scripts/cloud.sh pull "$arg"
     src="originals/$arg"; [ -f "$src" ] || { echo "нет 10 бит 4:2:2 оригинала: $arg" >&2; exit 1; }
