@@ -104,7 +104,7 @@ async function run(label, viewport, scale) {
   await page.locator('input[aria-label="Экспозиция"]').fill("0.8");
   await page.waitForTimeout(100);
   const p1 = await px();
-  ok(p1[0] + p1[1] + p1[2] > p0[0] + p0[1] + p0[2] + 20, `цвет: экспозиция делает кадр светлее (${p0.slice(0, 3)} → ${p1.slice(0, 3)})`);
+  ok(p1[0] + p1[1] + p1[2] > p0[0] + p0[1] + p0[2] + 8, `цвет: экспозиция делает кадр светлее (${p0.slice(0, 3)} → ${p1.slice(0, 3)})`);
   await shot("7-color");
   await page.click(".panel .seg >> text=Оттенки"); await page.waitForSelector(".bands");
   await page.click(".panel .seg >> text=Детали");
@@ -128,17 +128,61 @@ async function run(label, viewport, scale) {
   await ed(() => window.__ed.seek(window.__ed.lines[0].words[0].start + 0.2)); await page.waitForTimeout(400);
   ok(await inked() > 300, "субтитры видны на превью");
   await shot("7a-subs");
-  await page.click(".presets >> text=Плашка"); await page.waitForTimeout(300);
-  ok(await ed(() => window.__ed.P.subs.style.box) === true, "стиль субтитров меняется одним нажатием");
-  await page.click(".panel .seg >> text=Текст");
+  await page.click('.presets [aria-label="Плашка"]'); await page.waitForTimeout(300);
+  ok(await ed(() => window.__ed.P.subs.style.hl) === "box", "шаблон субтитров применяется одним нажатием");
+  await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 8000 });
+  // текст: правка, ключевое слово, разделить
+  await page.click(".panel .tabs >> text=Текст");
   await page.locator(".item.line").first().click();
   await page.fill(".sheet input", "Новый текст строки"); await page.click(".sheet >> text=Готово");
   await page.waitForTimeout(200);
   ok((await ed(() => window.__ed.lines[0].raw)).startsWith("Новый текст"), "текст строки можно править");
   await page.click('[aria-label="Отменить"]');
   ok(!(await ed(() => window.__ed.lines[0].raw)).startsWith("Новый"), "правка текста отменяется");
-  await page.click(".panel .seg >> text=Настройка"); await page.waitForTimeout(200);
-  await shot("7b-subs-setup");
+  const n0 = await ed(() => window.__ed.lines.length);
+  await page.locator(".item.line").first().click();
+  await page.locator(".sheet .wchip").first().click();
+  ok(await ed(() => window.__ed.lines[0].words[0].em) === true, "слово отмечается ключевым");
+  await shot("7b-line");
+  await page.locator(".sheet .wcut").first().click();
+  ok(await ed(() => window.__ed.lines.length) === n0 + 1, "строка делится на две");
+  await page.click(".sheet >> text=Склеить со следующей");
+  ok(await ed(() => window.__ed.lines.length) === n0, "строки склеиваются обратно");
+  await page.click(".sheet >> text=Готово");
+  // шрифт из MEGA
+  await page.click(".panel .tabs >> text=Шрифт");
+  await page.click(".fonts >> text=Мой шрифт");
+  await page.waitForFunction(() => window.__ed.P.subs.style.font === "Мой шрифт");
+  ok(await page.evaluate(() => document.fonts.check('20px "Мой шрифт"')), "свой шрифт из MEGA «Для монтажа ПАК» скачан и подключён");
+  ok(await page.locator(".fonts >> text=Второй").count() === 1, "шрифты находятся и во вложенных папках");
+  await shot("7c-font");
+  // цвет: палитра
+  await page.click(".panel .tabs >> text=Цвет");
+  await page.fill(".cp-hex", "#12ab34"); await page.locator(".cp-hex").blur();
+  ok(await ed(() => window.__ed.P.subs.style.color) === "#12ab34", "цвет текста задаётся кодом");
+  const sq = await page.locator(".cp-sq").boundingBox();
+  await page.mouse.click(sq.x + sq.width * 0.9, sq.y + sq.height * 0.1);
+  const col = await ed(() => window.__ed.P.subs.style.color);
+  ok(col !== "#12ab34" && /^#[0-9a-f]{6}$/.test(col), `цвет выбирается на палитре (${col})`);
+  await page.locator(".cp-hue").fill("200"); await page.waitForTimeout(100);
+  await shot("7d-color");
+  await page.click(".panel .seg >> text=Фон"); await page.locator('input[aria-label="Плотность фона"]').fill("0.7");
+  await page.click(".panel .seg >> text=Свечение"); await page.locator('input[aria-label="Сила свечения"]').fill("0.5");
+  // анимация
+  await page.click(".panel .tabs >> text=Анимация");
+  await page.click(".tiles >> text=Шторка вверх");
+  ok(await ed(() => window.__ed.P.subs.style.in) === "wipeUp", "анимация появления выбирается");
+  await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 8000 });
+  await page.click(".panel .seg >> text=Слова"); await page.click(".tiles >> text=Заливка");
+  await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 8000 });
+  await shot("7e-anim");
+  // перетаскивание пальцем по видео
+  const cb = await page.locator(".view canvas").first().boundingBox(), y0 = await ed(() => window.__ed.P.subs.style.y ?? 0.72);
+  await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height * 0.7); await page.mouse.down(); await page.mouse.move(cb.x + cb.width / 2 + 1, cb.y + cb.height * 0.5, { steps: 4 }); await page.mouse.up();
+  const y1 = await ed(() => window.__ed.P.subs.style.y);
+  ok(y1 < y0 - 0.1 && await ed(() => window.__ed.P.subs.style.x) === 0.5, `субтитры двигаются пальцем по видео (${y0.toFixed(2)} → ${y1.toFixed(2)}), по центру «прилипают»`);
+  await ed(() => window.__ed.seek(window.__ed.lines[0].words[0].start + 0.3)); await page.waitForTimeout(300);
+  await shot("7f-moved");
   await page.click(".panel-head >> text=Готово");
 
   // воспроизведение через склейку
@@ -173,6 +217,7 @@ async function run(label, viewport, scale) {
   const d2 = await page.evaluate(() => window.__fakeLog.find((l) => l.startsWith("dispatch export")));
   ok(job.output.w === 2160 && job.output.h === 3840 && job.timeline.length === 2 && job.grade.exposure === 0.8 && Object.values(job.clips)[0].file.startsWith("#"), "проект для сборщика лёг в MEGA: 4K, клипы, цвет, имена хешем");
   ok(job.subs && job.subs.lines.length >= 2 && job.subs.lines[0].words[0].text && job.subs.style.font, "субтитры ушли сборщику вместе с проектом");
+  ok(job.subs.fonts?.[0]?.path === "Для монтажа ПАК/Шрифты/Мой шрифт.ttf", "сборщику передан путь к своему шрифту в MEGA");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');
 

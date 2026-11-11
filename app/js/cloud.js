@@ -61,6 +61,13 @@ const real = {
     if (!f) return null;
     return (f.children || []).map((c) => ({ name: norm(c.name), size: c.size || 0, ts: c.timestamp || 0, dir: !!c.directory }));
   },
+  // все файлы папки и её подпапок, подходящие под образец: [{ name, path, size }] (path — папка файла)
+  async find(path, re) {
+    const root = await this.folder(path), out = [];
+    const walk = (f, p) => { for (const c of f.children || []) { if (c.directory) walk(c, p + "/" + norm(c.name)); else if (re.test(c.name || "")) out.push({ name: norm(c.name), path: p, size: c.size || 0 }); } };
+    if (root) walk(root, path);
+    return out;
+  },
   async node(path, name) {
     const f = await this.folder(path);
     return f && (f.children || []).find((c) => !c.directory && norm(c.name) === norm(name)) || null;

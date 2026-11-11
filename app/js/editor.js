@@ -3,7 +3,9 @@ import { h, icon, sheet, toast, askText, fmtTime, clamp } from "./ui.js";
 import { db, uid } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
 import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords } from "./media.js";
-import { buildLines, drawSubs, FONTS, SUB_DEFAULT, PRESETS } from "./subs.mjs";
+import { buildLines, drawSubs, normStyle, PRESETS } from "./subs.mjs";
+import { useFont } from "./fonts.js";
+import { subsPanel, openLine, openSubsTab } from "./subsui.js";
 import { cloud } from "./cloud.js";
 import { openLibrary } from "./library.js";
 import { openExport } from "./export.js";
@@ -201,7 +203,7 @@ export async function openEditor(P, onExit) {
     if (rec) { rec.unlocked = true; rec.v.play().catch(() => {}); }
     syncBar(); requestAnimationFrame(tick);
   }
-  function pause() { if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncBar(); }
+  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncBar(); }
   function toggle() { playing ? pause() : play(); }
   function tick(now) {
     if (!playing || !alive) return;
@@ -220,37 +222,36 @@ export async function openEditor(P, onExit) {
     scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
     draw();
+    if (stopAt != null && t >= stopAt) return pause();
     requestAnimationFrame(tick);
   }
 
   // ——— субтитры
   let lines = [];
-  const subStyle = () => ({ ...SUB_DEFAULT, ...(P.subs?.style || {}) });
-  const fontsAsked = new Set();
-  function loadFont(name) {
-    if (fontsAsked.has(name) || !FONTS[name] || !window.FontFace) return;
-    fontsAsked.add(name);
-    new FontFace(name, `url(fonts/${FONTS[name]})`).load().then((f) => { document.fonts.add(f); draw(); }).catch(() => {});
-  }
+  const subStyle = () => normStyle(P.subs?.style);
+  function loadFont(name) { useFont(name).then(draw).catch(() => {}); }
   function relines() {
-    lines = P.subs ? buildLines(P.clips, P.words, subStyle()) : [];
+    lines = P.subs ? buildLines(P.clips, P.words, P.subs.style) : [];
     if (P.subs) loadFont(subStyle().font);
     subRow.style.width = total() * pps + "px";
     subRow.hidden = !lines.length;
     subRow.classList.toggle("off", !P.subs?.on);
-    subRow.replaceChildren(...lines.map((l, i) => h("button.sub", { style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" }, onclick: (e) => { e.stopPropagation(); pause(); seek(l.start + 0.02); editLine(i); } }, l.words.map((w) => w.text).join(" "))));
+    subRow.replaceChildren(...lines.map((l, i) => h("button.sub", { style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" }, onclick: (e) => { e.stopPropagation(); pause(); seek(l.start + 0.02); openLine(subApi, i); } }, l.words.map((w) => w.text).join(" "))));
   }
-  async function editLine(i) {
-    const l = lines[i]; if (!l) return;
-    const txt = await askText("Текст субтитра", l.raw, "Пусто — убрать эту строку");
-    if (txt == null || txt === l.raw) return;
-    begin();
-    const src = P.words[l.key], a = src[l.i0].start, b = src[l.i1].end, parts = txt.split(/\s+/).filter(Boolean);
-    const neu = parts.length === l.i1 - l.i0 + 1 ? parts.map((x, k) => ({ ...src[l.i0 + k], text: x }))
-      : parts.map((x, k) => ({ text: x, start: a + (b - a) * k / parts.length, end: a + (b - a) * (k + 1) / parts.length }));
-    src.splice(l.i0, l.i1 - l.i0 + 1, ...neu);
-    relines(); draw(); renderPanel(); save();
+  // показать анимацию: проиграть строку под линией
+  let stopAt = null;
+  function playLine() {
+    const l = lines.find((x) => t >= x.start - 0.05 && t < x.end) || lines.find((x) => x.start >= t) || lines[0];
+    if (!l) return;
+    pause(); seek(Math.max(0, l.start - 0.05)); stopAt = l.end + 0.05; play();
   }
+  const subApi = {
+    P, cur: subStyle, st: () => (P.subs.style ||= {}), lines: () => lines, begin,
+    change: (fn) => { begin(); fn(); relines(); draw(); renderPanel(); save(); },
+    live: () => { relines(); draw(); save(); },
+    rerender: () => { if (panel === "subs") renderPanel(); }, seek, playLine,
+    busy: () => {}, get making() { return making; }, makeSubs: () => makeSubs(),
+  };
   let making = false;
   async function makeSubs() {
     if (making) return;
@@ -262,7 +263,7 @@ export async function openEditor(P, onExit) {
       begin();
       Object.assign(P.words, JSON.parse(JSON.stringify(got)));
       P.subs = { on: true, style: { ...(P.subs?.style || PRESETS[1][1]) } };
-      relines(); draw(); save(); toast("Субтитры готовы. Нажмите на строку, чтобы поправить текст");
+      openSubsTab(0); relines(); draw(); save(); toast("Субтитры готовы. Выберите стиль");
     } catch (e) { toast(e.message, 6000); }
     making = false; renderPanel();
   }
@@ -493,10 +494,11 @@ export async function openEditor(P, onExit) {
     const reset = () => { begin(); inp.value = def; set(def); val.textContent = show(def); draw(); save(); };
     return h("label.sl", {}, h("span.sl-top", {}, h("span", {}, label), h("button.sl-reset", { onclick: (e) => { e.preventDefault(); reset(); }, title: "Сбросить" }, val)), inp);
   }
-  let colorTab = 0, band = 0, subTab = 0;
+  let colorTab = 0, band = 0;
   function renderPanel() {
     side.hidden = !panel;
     ed.classList.toggle("with-panel", !!panel);
+    ed.classList.toggle("tall", panel === "subs" && !!P.subs);
     if (!panel) return side.replaceChildren();
     const head = (title, onReset) => h("div.panel-head", {}, h("b", {}, title),
       h("div", {}, onReset && h("button.link", { onclick: onReset }, "Сбросить"), h("button.link.strong", { onclick: () => openPanel(panel) }, "Готово")));
@@ -532,32 +534,8 @@ export async function openEditor(P, onExit) {
           h("p.muted", {}, "Приложение само расставит слова по времени речи. Потом текст можно поправить, а вид — выбрать из готовых стилей."),
           h("button.btn.primary.wide.big", { onclick: makeSubs, disabled: making }, making ? "Готовлю… это может занять до 4 минут" : "Создать субтитры"));
       }
-      const st = () => (P.subs.style ||= {}), cur = subStyle();
-      const ch = (fn) => { begin(); fn(); relines(); draw(); renderPanel(); save(); };
-      const sl = (label, key, min, max, showFn) => slider(label, () => subStyle()[key], (v) => { st()[key] = v; relines(); }, { min, max, def: SUB_DEFAULT[key], show: showFn });
-      const swatches = (key, cols) => h("div.bands", {}, cols.map((col) => h("button" + (cur[key] === col ? ".on" : ""), { style: { background: col }, "aria-label": col, onclick: () => ch(() => st()[key] = col) })));
-      const COLS = ["#ffffff", "#ffd60a", "#30d158", "#0a84ff", "#ff375f", "#ff9f0a", "#bf5af2", "#000000"];
-      const tabs = ["Стиль", "Текст", "Настройка"];
-      let body;
-      if (subTab === 0) body = h("div.presets", {}, PRESETS.map(([name, v]) => h("button" + (Object.keys(v).every((k) => cur[k] === v[k]) ? ".on" : ""), { onclick: () => { loadFont(v.font); ch(() => Object.assign(st(), v)); } },
-        h("span", { style: { fontFamily: `"${v.font}", sans-serif`, color: v.box ? "#fff" : v.active, background: v.box ? v.active : "none", textTransform: v.upper ? "uppercase" : "none" } }, name))));
-      else if (subTab === 1) body = h("div.list", {}, lines.length ? lines.map((l, i) => h("button.item.line", { onclick: () => { seek(l.start + 0.02); editLine(i); } },
-        h("small", {}, fmtTime(l.start, true)), h("span.item-main", {}, l.words.map((w) => w.text).join(" ")))) : h("p.muted", {}, "В ролике нет распознанной речи."));
-      else body = [
-        h("div.seg.scroll", {}, Object.keys(FONTS).map((f) => h("button" + (cur.font === f ? ".on" : ""), { style: { fontFamily: `"${f}"` }, onclick: () => { loadFont(f); ch(() => st().font = f); } }, f))),
-        h("div.seg.scroll", {}, [["none", "Без движения"], ["highlight", "Подсветка"], ["pop", "Прыжок"], ["reveal", "По слову"]].map(([k, n]) => h("button" + (cur.anim === k ? ".on" : ""), { onclick: () => ch(() => st().anim = k) }, n))),
-        sl("Размер", "size", 0.03, 0.14, (v) => Math.round(v * 1000)), sl("Высота на экране", "y", 0.08, 0.92, (v) => Math.round((1 - v) * 100)),
-        sl("Букв в строке", "maxChars", 1, 40, (v) => Math.round(v)), sl("Обводка", "stroke", 0, 0.3, (v) => Math.round(v * 100)),
-        h("div.sl-top", {}, "Цвет текста"), swatches("color", COLS), h("div.sl-top", {}, "Цвет слова, которое звучит"), swatches("active", COLS),
-        h("div.seg", {}, h("button" + (cur.upper ? ".on" : ""), { onclick: () => ch(() => st().upper = !cur.upper) }, "ЗАГЛАВНЫЕ"),
-          h("button" + (cur.punct ? ".on" : ""), { onclick: () => ch(() => st().punct = !cur.punct) }, "Знаки . , !"),
-          h("button" + (cur.box ? ".on" : ""), { onclick: () => ch(() => st().box = !cur.box) }, "Плашка")),
-        h("button.btn.wide", { onclick: makeSubs, disabled: making }, "Распознать речь заново")];
-      [...new Set(PRESETS.map((x) => x[1].font))].forEach(loadFont);
-      side.replaceChildren(head("Субтитры"),
-        h("div.seg.scroll", {}, tabs.map((n, i) => h("button" + (i === subTab ? ".on" : ""), { onclick: () => { subTab = i; renderPanel(); } }, n))),
-        h("div.sliders", {}, body),
-        h("button.btn.wide", { onclick: () => ch(() => P.subs.on = !P.subs.on) }, P.subs.on ? "Скрыть субтитры" : "Показать субтитры"));
+      subApi.slider = slider; subApi.head = head;
+      side.replaceChildren(...subsPanel(subApi).flat(9).filter(Boolean));
     } else if (panel === "sound") {
       side.replaceChildren(head("Звук"),
         slider("Громкость", () => P.volume, (v) => { P.volume = v; setVolume(); }, { min: 0, max: 2, def: 1, show: (v) => Math.round(v * 100) + " %" }),
@@ -567,22 +545,38 @@ export async function openEditor(P, onExit) {
   // кадр пальцами на превью
   const ptrs = new Map(); let g0 = null;
   canvas.addEventListener("pointerdown", (e) => {
-    if (panel !== "frame") { if (ptrs.size === 0) toggle(); return; }
-    const c = target(); if (!c) return;
+    const mode = panel === "frame" ? "frame" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
+    if (!mode) { if (ptrs.size === 0) toggle(); return; }
+    const c = mode === "frame" ? target() : null; if (mode === "frame" && !c) return;
     canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e);
-    if (ptrs.size === 1) begin();
-    const fr = (c.frame ||= { ...FRAME_DEFAULT }), ps = [...ptrs.values()];
-    g0 = { c, fr: { ...fr }, x: ps[0].clientX, y: ps[0].clientY, d: ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0 };
+    if (mode === "frame" && ptrs.size === 1) begin();
+    const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
+    if (mode === "frame") g0 = { mode, c, fr: { ...(c.frame ||= { ...FRAME_DEFAULT }) }, x: ps[0].clientX, y: ps[0].clientY, d };
+    else { const st = subStyle(); g0 = { mode, s0: { x: st.x, y: st.y, size: st.size }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
   });
   canvas.addEventListener("pointermove", (e) => {
     if (!ptrs.has(e.pointerId) || !g0) return;
     ptrs.set(e.pointerId, e);
-    const ps = [...ptrs.values()], fr = g0.c.frame, r = canvas.getBoundingClientRect();
-    if (ps.length >= 2 && g0.d) fr.scale = clamp(g0.fr.scale * Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) / g0.d, 0.2, 4);
-    else { fr.x = clamp(g0.fr.x + (ps[0].clientX - g0.x) / r.width, -1, 1); fr.y = clamp(g0.fr.y + (ps[0].clientY - g0.y) / r.height, -1, 1); }
+    const ps = [...ptrs.values()], r = canvas.getBoundingClientRect(), k = ps.length >= 2 && g0.d ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) / g0.d : 0;
+    const dx = (ps[0].clientX - g0.x) / r.width, dy = (ps[0].clientY - g0.y) / r.height;
+    if (g0.mode === "frame") {
+      const fr = g0.c.frame;
+      if (k) fr.scale = clamp(g0.fr.scale * k, 0.2, 4); else { fr.x = clamp(g0.fr.x + dx, -1, 1); fr.y = clamp(g0.fr.y + dy, -1, 1); }
+    } else {
+      if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
+      const st = subApi.st();
+      if (k) st.size = clamp(g0.s0.size * k, 0.025, 0.2);
+      else { const x = clamp(g0.s0.x + dx, 0.05, 0.95); st.x = Math.abs(x - 0.5) < 0.02 ? 0.5 : x; st.y = clamp(g0.s0.y + dy, 0.05, 0.95); }
+    }
     draw();
   });
-  const up = (e) => { if (!ptrs.delete(e.pointerId)) return; g0 = null; if (!ptrs.size) { renderPanel(); save(); } };
+  const up = (e) => {
+    if (!ptrs.delete(e.pointerId)) return;
+    const g = g0; if (!ptrs.size) g0 = null;
+    if (ptrs.size) return;
+    if (g?.mode === "subs" && !g.moved) return toggle();
+    renderPanel(); save();
+  };
   canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
 
   const onKey = (e) => {

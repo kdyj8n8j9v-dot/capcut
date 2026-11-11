@@ -30,7 +30,7 @@ a { color: var(--accent); }
 .chip { min-height: 34px; padding: 0 12px; border-radius: 17px; background: var(--s2); font-weight: 600; font-size: 14px; }
 .field { width: 100%; min-height: 48px; padding: 0 14px; margin-bottom: 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--s2); outline: none; -webkit-user-select: text; user-select: text; }
 .field:focus { border-color: var(--accent); }
-.row-btns { display: flex; gap: 10px; margin-top: 6px; } .row-btns .btn { flex: 1; }
+.row-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; } .row-btns .btn { flex: 1; }
 
 /* ——— листы и сообщения */
 .backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; animation: fade .18s; }
@@ -153,9 +153,35 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 .tl-subs.off { opacity: .4; }
 .sub { position: absolute; top: 0; height: 24px; padding: 0 6px; border-radius: 6px; background: #5e5ce6; color: #fff; font-size: 11px; line-height: 24px; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-.presets button { min-height: 58px; border-radius: 12px; background: #000; border: 2px solid var(--s3); font-size: 17px; }
+.presets button { position: relative; border-radius: 12px; overflow: hidden; background: linear-gradient(135deg, #3b3b40, #18181a); border: 2px solid transparent; line-height: 0; }
 .presets button.on { border-color: var(--accent); }
-.presets span { padding: 2px 8px; border-radius: 6px; -webkit-text-stroke: .5px #000; }
+.presets canvas { width: 100%; height: auto; display: block; background: none; box-shadow: none; border-radius: 0; }
+.presets .x { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.6); display: grid; place-items: center; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.tiles button { min-height: 44px; padding: 4px 6px; border-radius: 10px; background: var(--s2); font-size: 14px; border: 2px solid transparent; }
+.tiles button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.fonts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.fonts button { min-height: 40px; padding: 0 14px; border-radius: 10px; background: var(--s2); font-size: 17px; border: 2px solid transparent; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fonts button.on { border-color: var(--accent); } .fonts button.cloud { color: var(--muted); font-size: 14px; }
+.check { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; margin-bottom: 8px; text-align: left; font-size: 15px; }
+.check i { width: 22px; height: 22px; border-radius: 7px; border: 2px solid var(--s3); display: grid; place-items: center; flex: none; }
+.check.on i { background: var(--accent); border-color: var(--accent); }
+.tabs { position: sticky; top: 44px; z-index: 2; } .tabs button { padding: 0 7px; }
+.cp { margin-bottom: 14px; }
+.cp-quick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.cp-quick button { width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); } .cp-quick button.on { box-shadow: 0 0 0 2px var(--s1), 0 0 0 4px #fff; }
+.cp-sq { position: relative; height: 120px; border-radius: 12px; touch-action: none; margin-bottom: 10px; cursor: crosshair; }
+.cp-sq i { position: absolute; width: 24px; height: 24px; margin: -12px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.6); pointer-events: none; }
+.cp-row { display: flex; gap: 10px; align-items: center; }
+.cp-hue { flex: 1; } .cp-hex { width: 104px; min-height: 36px; margin: 0; padding: 0 10px; font-variant-numeric: tabular-nums; }
+input.cp-hue::-webkit-slider-runnable-track { height: 14px; border-radius: 7px; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+input.cp-hue::-webkit-slider-thumb { margin-top: -6px; }
+input.cp-hue::-moz-range-track { height: 14px; border-radius: 7px; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.wrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 14px; }
+.wchip { min-height: 40px; padding: 0 12px; border-radius: 10px; background: var(--s2); font-weight: 600; } .wchip.on { background: var(--danger); color: #fff; }
+.wcut { width: 26px; height: 40px; color: var(--muted); font-size: 15px; }
+.sheet .times { display: grid; grid-template-columns: auto 1fr 1fr; gap: 8px; align-items: center; margin-bottom: 14px; font-size: 15px; } .sheet .times .btn { min-height: 38px; }
+.item.line .em { font-weight: 700; }
 .item.line { min-height: 44px; } .item.line small { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; width: 44px; } .item.line .item-main { white-space: normal; }
 .seg button.on { background: var(--accent) !important; color: #fff; }
 .tl-add { flex: none; width: 56px; height: 56px; margin-left: 10px; border-radius: 10px; background: var(--s2); display: grid; place-items: center; color: var(--accent); }
@@ -165,10 +191,11 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 .tool { flex: 1; max-width: 110px; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; border-radius: 10px; }
 .tool.on { color: var(--accent); } .tool[data-tool=delete]:not(:disabled) { color: var(--danger); }
 
+@media (max-width: 819px) { .ed.tall .panel { height: min(42vh, 400px); } }
 /* iPad и широкие экраны: панель справа от превью */
 @media (min-width: 820px) {
   .stage { flex-direction: row; }
-  .panel { width: 340px; height: auto; margin: 0 12px 0 0; border-radius: 18px; padding-top: 6px; }
+  .panel { width: 380px; height: auto; margin: 0 12px 0 0; border-radius: 18px; padding-top: 6px; }
   .tool { font-size: 12px; } .tl { height: 130px; } .tl-track { height: 68px; } .clip, .tl-add { height: 64px; }
   .title { font-size: 18px; }
 }

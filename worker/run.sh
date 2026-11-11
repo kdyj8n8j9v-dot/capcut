@@ -66,6 +66,18 @@ for k, c in p["clips"].items():
     if not name:
         sys.exit("в MEGA «Исходники» нет одного из оригиналов проекта")
     c["file"] = name
+# свои шрифты субтитров — из MEGA «Для монтажа ПАК» (путь приходит из приложения; берём только оттуда)
+import os
+for i, f in enumerate((p.get("subs") or {}).get("fonts") or []):
+    path = f.get("path", "")
+    if not path.startswith("Для монтажа ПАК/") or ".." in path or os.path.splitext(path)[1].lower() not in (".ttf", ".otf"):
+        continue
+    os.makedirs("work/fonts", exist_ok=True)
+    local = os.path.abspath(f"work/fonts/{i}{os.path.splitext(path)[1].lower()}")
+    if subprocess.run(["mega-get", "/" + path, local], capture_output=True).returncode == 0 and os.path.exists(local):
+        f["file"] = local
+    else:
+        print("свой шрифт не скачался — будет запасной", file=sys.stderr)
 p["id"] = sys.argv[3]
 print(json.dumps(p, ensure_ascii=False))
 PY

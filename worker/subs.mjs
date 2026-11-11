@@ -9,7 +9,8 @@ import { drawSubs, band, FONTS } from "../app/js/subs.mjs";
 
 const [, , proj, out, fpsS, Ws, Hs, Ns] = process.argv;
 const W = +Ws, H = +Hs, N = +Ns, [fn, fd] = fpsS.split("/").map(Number), fps = fn / (fd || 1);
-const { style, lines } = JSON.parse(fs.readFileSync(proj, "utf8")).subs;
+const { style, lines, fonts } = JSON.parse(fs.readFileSync(proj, "utf8")).subs;
+for (const f of fonts || []) if (f.file && fs.existsSync(f.file)) GlobalFonts.registerFromPath(f.file, f.name);   // свой шрифт владельца из MEGA
 for (const [name, file] of Object.entries(FONTS)) GlobalFonts.registerFromPath(fileURLToPath(new URL("../app/fonts/" + file, import.meta.url)), name);
 const b = band(W, H, style);
 const cv = createCanvas(W, b.h), ctx = cv.getContext("2d");
