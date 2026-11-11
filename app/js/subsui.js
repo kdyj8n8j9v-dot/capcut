@@ -45,7 +45,7 @@ export function colorPicker(get, set, begin) {
   return h("div.cp", {}, quick, sq, h("div.cp-row", {}, hueIn, hex));
 }
 
-let tab = 0, colorTab = 0, animTab = 0, fontQuery = "", packList = null, packLocal = new Set(), packErr = "";
+let wordsOpen = false, tab = 0, colorTab = 0, animTab = 0, fontQuery = "", packList = null, packLocal = new Set(), packErr = "";
 
 // api: { P, cur, st, lines, change(fn), live(), begin, slider, head, rerender, seek, playLine, makeSubs, making, toastErr }
 export function subsPanel(api) {
@@ -62,6 +62,30 @@ export function subsPanel(api) {
   const picker = (key) => colorPicker(() => api.cur()[key] || "#ffffff", (c) => { st()[key] = c; live(); }, begin);
   const toggle = (label, key) => h("button.check" + (cur[key] ? ".on" : ""), { onclick: () => change(() => st()[key] = !cur[key]) }, h("i", {}, cur[key] ? icon("check", 14) : null), label);
   const tiles = (list, on, pick) => h("div.tiles", {}, list.map(([k, n]) => h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k) }, n)));
+  // плитки анимаций: на каждой кнопке анимация играет сама
+  const animTiles = (list, on, pick, kind) => {
+    const cvs = [], t0 = performance.now();
+    const box = h("div.tiles.anim", {}, list.map(([k, n]) => { const cv = h("canvas", { width: 180, height: 76 }); cvs.push([cv, k]); return h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k), "aria-label": n }, cv, h("span", {}, n)); }));
+    const base = { font: "Montserrat", size: 0.2, x: 0.5, y: 0.5, color: "#ffffff", stroke: 0, shadow: 0, hl: "none", in: "none", out: "none", loop: "none", maxChars: 99, hlColor: "#ffd60a" };
+    const one = (a, b) => [{ start: a, end: b, words: [{ text: "Текст", start: a, end: b }] }];
+    const three = [{ start: -1, end: 9, words: ["Раз", "два", "три"].map((x, i) => ({ text: x, start: 0.15 + i * 0.6, end: 0.7 + i * 0.6 })) }];
+    let odd = false;
+    const frame = (now) => {
+      if (!box.isConnected && now - t0 > 800) return;
+      requestAnimationFrame(frame);
+      if ((odd = !odd) || !box.isConnected) return;
+      const sec = (now - t0) / 1000, tt = sec % 2;
+      for (const [cv, k] of cvs) {
+        const c = cv.getContext("2d"); c.clearRect(0, 0, 180, 76);
+        if (kind === "in") drawSubs(c, 180, 76, tt, one(0.25, 9), { ...base, in: k, inDur: 0.7 });
+        else if (kind === "out") drawSubs(c, 180, 76, tt, one(-1, 1.5), { ...base, out: k, outDur: 0.7 });
+        else if (kind === "loop") drawSubs(c, 180, 76, sec + 1, one(0, 1e9), { ...base, loop: k });
+        else drawSubs(c, 180, 76, tt, three, { ...base, size: 0.13, hl: k });
+      }
+    };
+    useFont("Montserrat").catch(() => {}); requestAnimationFrame(frame);
+    return box;
+  };
   let body;
 
   if (tab === 0) {            // ——— стили
@@ -82,7 +106,7 @@ export function subsPanel(api) {
       mine.length ? h("div.presets", {}, mine.map((m, i) => tile(m.name, m.style, async () => { if (await ask("Удалить стиль?", `«${m.name}»`)) { settings.set("subStyles", mine.filter((_, k) => k !== i)); rerender(); } })))
         : h("p.hint", {}, "Настройте вид как нравится и сохраните — стиль появится здесь и в других проектах.")];
   } else if (tab === 1) {     // ——— текст
-    body = [h("p.hint", {}, "Нажмите на строку: поправить текст, выделить слово, разделить или склеить."),
+    body = [h("p.hint", {}, "Нажмите на строку, чтобы поправить текст. Enter внутри текста делит строку на отдельные субтитры."),
       h("div.list", {}, lines.length ? lines.map((l, i) => h("button.item.line", { onclick: () => { api.seek(l.start + 0.02); openLine(api, i); } },
         h("small", {}, fmtTime(l.start, true)), h("span.item-main", {}, l.words.map((w) => h("span" + (w.em ? ".em" : ""), { style: w.em ? { color: cur.emColor } : {} }, w.text + " "))))) : h("p.muted", {}, "В ролике нет распознанной речи.")),
       sl("Букв в строке", "maxChars", 1, 40, (v) => Math.round(v), 1),
@@ -117,13 +141,11 @@ export function subsPanel(api) {
       sl("Высота на экране", "y", 0.05, 0.95, (v) => Math.round((1 - v) * 100)), sl("Поворот", "rot", -45, 45, (v) => Math.round(v) + "°", 1),
       h("button.btn.wide", { onclick: () => change(() => Object.assign(st(), { x: 0.5, rot: 0 })) }, "Поставить по центру")]];
   } else if (tab === 3) {     // ——— цвет
-    const parts = wordMode ? [["text", "Текст"], ["stroke", "Обводка"]] : [["text", "Текст"], ["cloud", "Облако"], ["stroke", "Обводка"], ["bg", "Плашка"], ["shadow", "Тень"], ["glow", "Свечение"]];
+    const parts = wordMode ? [["text", "Текст"], ["stroke", "Обводка"]] : [["text", "Текст"], ["stroke", "Обводка"], ["bg", "Плашка"], ["shadow", "Тень"], ["glow", "Свечение"]];
     if (colorTab >= parts.length) colorTab = 0;
     const k = parts[colorTab][0];
     body = [seg(parts, k, (x) => { colorTab = parts.findIndex((p) => p[0] === x); rerender(); }),
       k === "text" ? [picker("color"), h("button.check" + (cur.color2 ? ".on" : ""), { onclick: () => change(() => st().color2 = cur.color2 ? "" : "#ff375f") }, h("i", {}, cur.color2 ? icon("check", 14) : null), "Градиент (второй цвет снизу)"), cur.color2 && picker("color2"), !wordMode && sl("Непрозрачность", "opacity", 0.1, 1, pct)]
-      : k === "cloud" ? [h("p.hint", {}, "Мягкое овальное затемнение под текстом — чтобы буквы читались на любом фоне."),
-        sl("Плотность", "cloud", 0, 1, pct), cur.cloud > 0 && [sl("Размер облака", "cloudSize", 0.5, 3, pct), sl("Высота облака", "cloudTall", 0.5, 3, pct), sl("Мягкость края", "cloudSoft", 0.05, 1, pct), h("div.sl-top", {}, "Цвет облака"), picker("cloudColor")]]
       : k === "stroke" ? [!wordMode && sl("Толщина", "stroke", 0, 0.4, pct), (wordMode || cur.stroke > 0) && picker("strokeColor")]
       : k === "bg" ? [sl("Плотность фона", "bg", 0, 1, pct), cur.bg > 0 && [picker("bgColor"), sl("Скругление", "bgRadius", 0, 0.7, pct), sl("Отступ", "bgPad", 0, 0.6, pct)]]
       : k === "shadow" ? [sl("Сила тени", "shadow", 0, 1, pct), cur.shadow > 0 && [sl("Размытие", "shadowBlur", 0, 1, pct), picker("shadowColor")]]
@@ -132,13 +154,13 @@ export function subsPanel(api) {
     const parts = [["in", "Появление"], ["out", "Исчезание"], ["loop", "В кадре"], ["hl", "Слова"]];
     const k = parts[animTab][0], pick = (key) => (v) => { change(() => st()[key] = v); api.playLine(); };
     body = [seg(parts, k, (x) => { animTab = parts.findIndex((p) => p[0] === x); rerender(); }),
-      k === "in" ? [tiles(ANIM_IN, cur.in, pick("in")), cur.in !== "none" && sl("Длительность", "inDur", 0.05, 1.5, sec)]
-      : k === "out" ? [tiles(ANIM_OUT, cur.out, pick("out")), cur.out !== "none" && sl("Длительность", "outDur", 0.05, 1.5, sec)]
-      : k === "loop" ? [tiles(ANIM_LOOP, cur.loop, pick("loop")), h("p.hint", {}, "Движение, которое идёт всё время, пока строка на экране.")]
-      : [h("p.hint", {}, "Как выделяется слово, которое сейчас звучит."), tiles(HL, cur.hl, pick("hl")),
+      k === "in" ? [animTiles(ANIM_IN, cur.in, pick("in"), "in"), cur.in !== "none" && sl("Длительность", "inDur", 0.05, 1.5, sec)]
+      : k === "out" ? [animTiles(ANIM_OUT, cur.out, pick("out"), "out"), cur.out !== "none" && sl("Длительность", "outDur", 0.05, 1.5, sec)]
+      : k === "loop" ? [animTiles(ANIM_LOOP, cur.loop, pick("loop"), "loop"), h("p.hint", {}, "Движение, которое идёт всё время, пока строка на экране.")]
+      : [h("p.hint", {}, "Как выделяется слово, которое сейчас звучит."), animTiles(HL, cur.hl, pick("hl"), "hl"),
         cur.hl !== "none" && [h("div.sl-top", {}, "Цвет звучащего слова"), picker("hlColor")],
         toggle("Слова появляются по одному", "reveal"), toggle("Ещё не сказанные — бледные", "dim"),
-        h("div.sl-top", {}, "Цвет ключевых слов"), h("p.hint", {}, "Ключевое слово отмечается в строке: вкладка «Текст» → нажать на строку → нажать на слово."), picker("emColor")]];
+        h("div.sl-top", {}, "Цвет ключевых слов"), h("p.hint", {}, "Ключевое слово отмечается так: вкладка «Текст» → нажать на строку → нажать на слово."), picker("emColor")]];
   }
   const TABS = ["Стили", "Текст", "Шрифт", "Цвет", "Анимация"];
   const allowed = wordMode ? [2, 3] : [0, 1, 2, 3, 4];
@@ -146,16 +168,14 @@ export function subsPanel(api) {
   // ——— что меняем: все субтитры, выбранные или одно слово
   const sel = api.selLines(), one = sel.length === 1 ? sel[0] : null;
   const own = sel.some((l) => l.style || l.words.some((w) => w.style));
-  const scopeBox = h("div.scope" + (api.all ? "" : ".part"), {},
+  const cut = (x) => (x.length > 26 ? x.slice(0, 25) + "…" : x);
+  const info = !sel.length ? "Нажмите на субтитр на дорожке внизу" : wordMode ? `Слово: «${cut(P.words[api.word.key][api.word.idx].text)}»` : one ? `Выбрано: «${cut(one.raw)}»` : `Выбрано субтитров: ${sel.length}`;
+  const scopeBox = h("div.scope", {},
     h("button.check" + (api.all ? ".on" : ""), { onclick: () => api.setAll(!api.all) }, h("i", {}, api.all ? icon("check", 14) : null), "Менять все субтитры сразу"),
-    !api.all && [
-      h("div.scope-info", {}, h("span", {}, !sel.length ? "Нажмите на субтитр на дорожке внизу. Можно выбрать несколько." : wordMode ? "Меняется одно слово" : sel.length === 1 ? "Меняется одна строка" : `Меняются строки: ${sel.length}`),
-        sel.length > 0 && h("button.link", { onclick: api.clearSel }, "Снять")),
-      one && h("div.wrow", {}, h("small.muted", {}, "Только слово:"), P.words[one.key].slice(one.i0, one.i1 + 1).map((w, k) =>
-        h("button.wchip.sm" + (api.word && api.word.idx === one.i0 + k ? ".on" : ""), { onclick: () => api.setWord(api.word && api.word.idx === one.i0 + k ? null : one.i0 + k) }, w.text))),
-      (one || own) && h("div.row-btns", {},
-        one && h("button.btn.sm", { onclick: () => openLine(api, lines.indexOf(one)) }, "Текст строки"),
-        own && h("button.btn.sm", { onclick: () => change(() => api.resetOwn()) }, wordMode ? "Вернуть слову общий вид" : "Вернуть общий вид"))]);
+    !api.all && h("div.scope-info", {}, h("span", {}, info), own && h("button.link", { onclick: () => change(() => api.resetOwn()) }, "Вернуть общий вид")),
+    !api.all && one && (wordsOpen || wordMode
+      ? h("div.wrow", {}, P.words[one.key].slice(one.i0, one.i1 + 1).map((w, k) => h("button.wchip.sm" + (api.word && api.word.idx === one.i0 + k ? ".on" : ""), { onclick: () => api.setWord(api.word && api.word.idx === one.i0 + k ? null : one.i0 + k) }, w.text)))
+      : one.i1 > one.i0 && h("button.link.sm", { onclick: () => { wordsOpen = true; rerender(); } }, "Изменить только одно слово")));
   return [head("Субтитры"), scopeBox,
     h("div.seg.scroll.tabs", {}, TABS.map((n, i) => allowed.includes(i) && h("button" + (i === tab ? ".on" : ""), { onclick: () => { tab = i; rerender(); } }, n))),
     h("div.sliders", {}, body),
@@ -172,13 +192,17 @@ export function openLine(api, index) {
     if (!l) return s && s.close();
     const src = P.words[l.key], n = l.i1 - l.i0 + 1, next = api.lines()[index + 1];
     const canJoin = next && next.key === l.key && next.i0 === l.i1 + 1;
-    const inp = h("input.field", { value: l.raw, "aria-label": "Текст строки", onkeydown: (e) => { if (e.key === "Enter") applyText(); } });
+    const inp = h("textarea.field.area", { value: l.raw, rows: 3, "aria-label": "Текст строки", autocapitalize: "off" });
     const applyText = () => {
-      const txt = inp.value.trim();
-      if (txt === l.raw) return false;
-      const a = src[l.i0].start, b = src[l.i1].end, parts = txt.split(/\s+/).filter(Boolean);
-      change(() => src.splice(l.i0, n, ...(parts.length === n ? parts.map((x, k) => ({ ...src[l.i0 + k], text: x }))
-        : parts.map((x, k) => ({ text: x, start: a + (b - a) * k / parts.length, end: a + (b - a) * (k + 1) / parts.length, ...(k === 0 && src[l.i0].ls ? { ls: src[l.i0].ls } : {}) })))));
+      const pieces = inp.value.split("\n").map((x) => x.trim().split(/\s+/).filter(Boolean)).filter((x) => x.length), flat = pieces.flat();
+      if (pieces.length <= 1 && flat.join(" ") === l.raw) return false;
+      const a = src[l.i0].start, b = src[l.i1].end, tail = { br: src[l.i1].br, nb: src[l.i1].nb };
+      const neu = flat.length === n ? flat.map((x, k) => ({ ...src[l.i0 + k], text: x }))
+        : flat.map((x, k) => ({ text: x, start: a + (b - a) * k / flat.length, end: a + (b - a) * (k + 1) / flat.length, ...(k === 0 && src[l.i0].ls ? { ls: src[l.i0].ls } : {}) }));
+      // каждая строка текста — отдельный субтитр
+      let at = 0;
+      pieces.forEach((pc, pi) => { for (let k = 0; k < pc.length; k++) { const w = neu[at + k]; delete w.br; delete w.nb; if (k === pc.length - 1) { if (pi < pieces.length - 1) w.br = true; else { if (tail.br) w.br = true; if (tail.nb) w.nb = true; } } else if (pieces.length > 1 || flat.length !== n) w.nb = true; } at += pc.length; });
+      change(() => src.splice(l.i0, n, ...neu));
       return true;
     };
     const nudge = (which, d) => change(() => { const w = which ? src[l.i1] : src[l.i0]; if (which) w.end = Math.max(w.start + 0.05, w.end + d); else w.start = Math.max(0, Math.min(w.end - 0.05, w.start + d)); });
@@ -186,10 +210,9 @@ export function openLine(api, index) {
     for (let k = 0; k < n; k++) {
       const w = src[l.i0 + k];
       words.push(h("button.wchip" + (w.em ? ".on" : ""), { onclick: () => { change(() => { w.em = !w.em; }); render(); } }, w.text));
-      if (k < n - 1) words.push(h("button.wcut", { "aria-label": "Разделить здесь", title: "Разделить здесь", onclick: () => { change(() => { w.br = true; delete w.nb; }); render(); } }, "⏎"));
     }
     const box = [inp,
-      h("p.hint", {}, "Нажмите на слово — оно станет ключевым (другой цвет). Значок ⏎ между словами делит строку на две."),
+      h("p.hint", {}, "Enter в тексте делит строку: каждая строчка станет отдельным субтитром. Ниже нажмите на слово — оно станет ключевым (другой цвет)."),
       h("div.wrow", {}, words),
       h("div.times", {}, h("span", {}, "Начало"), h("button.btn", { onclick: () => { nudge(0, -0.1); render(); } }, "раньше"), h("button.btn", { onclick: () => { nudge(0, 0.1); render(); } }, "позже"),
         h("span", {}, "Конец"), h("button.btn", { onclick: () => { nudge(1, -0.1); render(); } }, "раньше"), h("button.btn", { onclick: () => { nudge(1, 0.1); render(); } }, "позже")),

@@ -4,8 +4,8 @@ export const FONTS = { Montserrat: "Montserrat_800ExtraBold.ttf", Inter: "Inter_
 export const SUB_DEFAULT = {
   font: "Montserrat", size: 0.07, x: 0.5, y: 0.72, rot: 0, align: "center", ls: 0, ws: 0, lh: 1.25, sx: 1, sy: 1, wrap: 0.9, italic: false, case: "none", punct: true, maxChars: 16, shift: 0,
   color: "#ffffff", color2: "", opacity: 1,
-  stroke: 0.14, strokeColor: "#000000",
-  shadow: 0, shadowColor: "#000000", shadowBlur: 0.4,
+  stroke: 0, strokeColor: "#000000",
+  shadow: 0.35, shadowColor: "#000000", shadowBlur: 0.4,
   glow: 0, glowColor: "#ffd60a",
   bg: 0, bgColor: "#000000", bgRadius: 0.3, bgPad: 0.25,
   cloud: 0, cloudColor: "#000000", cloudSize: 1, cloudTall: 1, cloudSoft: 0.6,
@@ -17,23 +17,29 @@ export const ANIM_IN = [["none", "Нет"], ["fade", "Проявление"], ["
 export const ANIM_OUT = [["none", "Нет"], ["fade", "Затухание"], ["pop", "Сжатие"], ["zoom", "Увеличение"], ["up", "Вверх"], ["down", "Вниз"], ["left", "Влево"], ["right", "Вправо"], ["wipe", "Шторка"], ["wipeC", "К центру"], ["flip", "Разворот"]];
 export const ANIM_LOOP = [["none", "Нет"], ["pulse", "Пульс"], ["shake", "Дрожь"], ["swing", "Качание"], ["float", "Парение"], ["wave", "Волна"]];
 export const HL = [["none", "Нет"], ["color", "Цвет"], ["pop", "Прыжок"], ["box", "Плашка"], ["under", "Черта"], ["fill", "Заливка"], ["keep", "Закрашивание"], ["bounce", "Подскок"], ["glow", "Свечение"]];
-const P0 = { color2: "", cloud: 0, bg: 0, shadow: 0, glow: 0, reveal: false, dim: false, out: "none", loop: "none", italic: false, ls: 0, case: "none", stroke: 0.14, strokeColor: "#000000", color: "#ffffff", in: "pop", inDur: 0.25 };
+const P0 = { color2: "", cloud: 0, bg: 0, shadow: 0, glow: 0, reveal: false, dim: false, out: "none", loop: "none", italic: false, ls: 0, ws: 0, sx: 1, sy: 1, case: "none", stroke: 0, shadow: 0.35, shadowColor: "#000000", strokeColor: "#000000", color: "#ffffff", in: "pop", inDur: 0.25 };
 export const PRESETS = [
   ["Классика", { ...P0, font: "Inter", size: 0.06, maxChars: 22, hl: "none", in: "fade" }],
   ["Караоке", { ...P0, font: "Montserrat", size: 0.07, maxChars: 16, hl: "color", hlColor: "#ffd60a" }],
-  ["Прыжок", { ...P0, font: "Montserrat", size: 0.075, maxChars: 14, case: "upper", hl: "pop", hlColor: "#30d158", stroke: 0.16 }],
-  ["Плашка", { ...P0, font: "Rubik", size: 0.065, maxChars: 16, hl: "box", hlColor: "#0a84ff", stroke: 0, shadow: 0.4 }],
+  ["Прыжок", { ...P0, font: "Montserrat", size: 0.075, maxChars: 14, case: "upper", hl: "pop", hlColor: "#30d158" }],
+  ["Плашка", { ...P0, font: "Rubik", size: 0.065, maxChars: 16, hl: "box", hlColor: "#0a84ff" }],
   ["По слову", { ...P0, font: "Oswald", size: 0.085, maxChars: 16, case: "upper", hl: "none", reveal: true, in: "none" }],
-  ["Одно слово", { ...P0, font: "Montserrat", size: 0.11, maxChars: 1, case: "upper", hl: "color", hlColor: "#ffd60a", stroke: 0.16 }],
+  ["Одно слово", { ...P0, font: "Montserrat", size: 0.11, maxChars: 1, case: "upper", hl: "color", hlColor: "#ffd60a" }],
   ["Заливка", { ...P0, font: "Montserrat", size: 0.07, maxChars: 16, hl: "fill", hlColor: "#ff9f0a", in: "up" }],
-  ["Неон", { ...P0, font: "Rubik", size: 0.07, maxChars: 16, stroke: 0, glow: 0.8, glowColor: "#bf5af2", hl: "color", hlColor: "#ff9ff3", in: "fade", loop: "pulse" }],
-  ["Подложка", { ...P0, font: "Inter", size: 0.055, maxChars: 22, stroke: 0, bg: 0.75, bgColor: "#000000", hl: "color", hlColor: "#ffd60a", in: "fade" }],
+  ["Неон", { ...P0, font: "Rubik", size: 0.07, maxChars: 16, shadow: 0, glow: 0.8, glowColor: "#bf5af2", hl: "color", hlColor: "#ff9ff3", in: "fade", loop: "pulse" }],
+  ["Подложка", { ...P0, font: "Inter", size: 0.055, maxChars: 22, shadow: 0, bg: 0.75, bgColor: "#000000", hl: "color", hlColor: "#ffd60a", in: "fade" }],
   ["Градиент", { ...P0, font: "Montserrat", size: 0.08, maxChars: 14, case: "upper", color: "#ffd60a", color2: "#ff375f", hl: "pop", hlColor: "#ffffff", in: "zoom" }],
-  ["Печать", { ...P0, font: "Inter", size: 0.06, maxChars: 20, hl: "none", in: "type", inDur: 0.5, stroke: 0, shadow: 0.6 }],
-  ["Рукой", { ...P0, font: "Caveat", size: 0.1, maxChars: 18, hl: "under", hlColor: "#ff375f", stroke: 0.1, in: "wipe", inDur: 0.35 }],
-  ["Облако", { ...P0, font: "Inter", size: 0.06, maxChars: 20, stroke: 0, cloud: 0.6, cloudSize: 1.2, hl: "color", hlColor: "#ffd60a", in: "fade" }],
-  ["Удар", { ...P0, font: "Montserrat", size: 0.085, maxChars: 12, case: "upper", hl: "bounce", hlColor: "#ffd60a", in: "stomp", inDur: 0.2, stroke: 0.16 }],
-  ["Тишина", { ...P0, font: "Inter", size: 0.05, maxChars: 24, dim: true, hl: "none", stroke: 0, shadow: 0.5, in: "fade" }],
+  ["Печать", { ...P0, font: "Inter", size: 0.06, maxChars: 20, hl: "none", in: "type", inDur: 0.5 }],
+  ["Рукой", { ...P0, font: "Caveat", size: 0.1, maxChars: 18, hl: "under", hlColor: "#ff375f", in: "wipe", inDur: 0.35 }],
+  ["Удар", { ...P0, font: "Montserrat", size: 0.085, maxChars: 12, case: "upper", hl: "bounce", hlColor: "#ffd60a", in: "stomp", inDur: 0.2 }],
+  ["Тишина", { ...P0, font: "Inter", size: 0.05, maxChars: 24, dim: true, hl: "none", in: "fade" }],
+  ["Контур", { ...P0, font: "Montserrat", size: 0.075, maxChars: 14, case: "upper", stroke: 0.16, shadow: 0, hl: "color", hlColor: "#ffd60a" }],
+  ["Таблетка", { ...P0, font: "Inter", size: 0.055, maxChars: 18, color: "#000000", shadow: 0, bg: 1, bgColor: "#ffffff", bgRadius: 0.7, bgPad: 0.3, hl: "color", hlColor: "#ff375f", in: "pop" }],
+  ["Кино", { ...P0, font: "Oswald", size: 0.06, maxChars: 26, case: "upper", ls: 0.18, hl: "none", in: "fade", inDur: 0.5, out: "fade", outDur: 0.3 }],
+  ["Высокий", { ...P0, font: "Oswald", size: 0.075, maxChars: 12, case: "upper", sy: 1.8, sx: 0.85, hl: "color", hlColor: "#30d158", in: "wipeUp" }],
+  ["Огонь", { ...P0, font: "Rubik", size: 0.08, maxChars: 12, case: "upper", color: "#ffd60a", color2: "#ff453a", glow: 0.5, glowColor: "#ff9f0a", shadow: 0, hl: "bounce", hlColor: "#ffffff", in: "stomp", inDur: 0.2 }],
+  ["Мягкий", { ...P0, font: "Caveat", size: 0.095, maxChars: 20, color: "#ffffff", hl: "keep", hlColor: "#ffd9a8", in: "letters", inDur: 0.5, out: "fade" }],
+  ["Субтитр", { ...P0, font: "Inter", size: 0.045, maxChars: 30, y: 0.86, hl: "none", in: "none", bg: 0.55, bgRadius: 0.15, shadow: 0 }],
   ["Волна", { ...P0, font: "Rubik", size: 0.075, maxChars: 14, color: "#40c8e0", color2: "#0a84ff", hl: "none", in: "letters", inDur: 0.5, loop: "wave" }],
 ];
 const GAP = 0.6, TAIL = 0.35;   // пауза, после которой начинается новая строка; сколько строка держится после последнего слова
@@ -90,10 +96,11 @@ export function buildLines(clips, words, style) {
 }
 
 // Полоса кадра, в которую попадают субтитры (сборщик рисует и накладывает только её). Чётные числа.
-export function band(W, H, style, lines) {
+export function band(W, H, style, lines, clouds) {
   let y0 = H, y1 = 0;
+  for (const c0 of clouds || []) { const c = { ...CLOUD_DEFAULT, ...c0 }; y0 = Math.min(y0, (c.y - c.h / 2) * H - 2); y1 = Math.max(y1, (c.y + c.h / 2) * H + 2); }
   const seen = new Set();
-  for (const ov of [null, ...(lines || []).map((l) => l.style).filter(Boolean)]) {
+  for (const ov of (lines || []).length ? [null, ...lines.map((l) => l.style).filter(Boolean)] : []) {
     if (seen.has(ov)) continue; seen.add(ov);
     const st = normStyle(ov ? { ...style, ...ov } : style);
     if (st.rot) return { y: 0, h: H };
@@ -103,6 +110,25 @@ export function band(W, H, style, lines) {
   }
   const y = Math.floor(clamp(y0, 0, H) / 2) * 2, y2 = Math.ceil(clamp(y1, 0, H) / 2) * 2;
   return { y, h: Math.max(2, y2 - y) };
+}
+
+// Облако: мягкий овал-затемнение, отдельный объект ролика со своим местом и временем (не привязан к субтитрам).
+export const CLOUD_DEFAULT = { x: 0.5, y: 0.72, w: 0.8, h: 0.16, a: 0.6, soft: 0.6, color: "#000000", fade: 0.25 };
+export function drawClouds(ctx, W, H, t, clouds) {
+  let any = false;
+  for (const c0 of clouds || []) {
+    if (t < c0.start || t >= c0.end) continue;
+    const c = { ...CLOUD_DEFAULT, ...c0 };
+    const k = c.fade > 0 ? clamp(Math.min(t - c.start, c.end - t) / c.fade, 0, 1) : 1, a = c.a * k;
+    if (a <= 0.001) continue;
+    ctx.save(); ctx.translate(c.x * W, c.y * H); ctx.scale(c.w * W / 2, c.h * H / 2);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1), core = clamp(1 - c.soft, 0, 0.95) * 0.9;
+    for (let n = 0; n <= 8; n++) { const u = n / 8; g.addColorStop(core + (1 - core) * u, rgba(c.color, a * Math.pow(Math.cos(u * Math.PI / 2), 2))); }
+    if (core > 0) g.addColorStop(0, rgba(c.color, a));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    any = true;
+  }
+  return any;
 }
 
 function rgba(hex, a) {

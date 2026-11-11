@@ -212,7 +212,7 @@ def render(project, out, draft=False):
     total = sum(round((s["out"] - s["in"]) * fps) for s in segs)
     vf = f"lut3d=file='{cube}':interp=tetrahedral,scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
     sub_in, vmap = [], ["-map", "0:v", "-vf", vf]
-    if (project.get("subs") or {}).get("lines"):
+    if (project.get("subs") or {}).get("lines") or (project.get("subs") or {}).get("clouds"):
         # subtitles: the app's own drawing code renders a transparent strip (worker/subs.mjs); it is laid over the graded
         # picture already in 10-bit 4:2:2, so the grade never touches the text and the video stays 10-bit
         sub = work / "subs.mov"

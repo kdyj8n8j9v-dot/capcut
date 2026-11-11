@@ -134,7 +134,7 @@ async function run(label, viewport, scale) {
   // текст: правка, ключевое слово, разделить
   await page.click(".panel .tabs >> text=Текст");
   await page.locator(".item.line").first().click();
-  await page.fill(".sheet input", "Новый текст строки"); await page.click(".sheet >> text=Готово");
+  await page.fill(".sheet textarea", "Новый текст строки"); await page.click(".sheet >> text=Готово");
   await page.waitForTimeout(200);
   ok((await ed(() => window.__ed.lines[0].raw)).startsWith("Новый текст"), "текст строки можно править");
   await page.click('[aria-label="Отменить"]');
@@ -144,8 +144,10 @@ async function run(label, viewport, scale) {
   await page.locator(".sheet .wchip").first().click();
   ok(await ed(() => window.__ed.lines[0].words[0].em) === true, "слово отмечается ключевым");
   await shot("7b-line");
-  await page.locator(".sheet .wcut").first().click();
-  ok(await ed(() => window.__ed.lines.length) === n0 + 1, "строка делится на две");
+  const raw0 = await page.locator(".sheet textarea").inputValue();
+  await page.fill(".sheet textarea", raw0.replace(" ", "\n")); await page.click(".sheet >> text=Готово"); await page.waitForTimeout(200);
+  ok(await ed(() => window.__ed.lines.length) === n0 + 1, "Enter в тексте делит строку на два субтитра");
+  await page.locator(".item.line").first().click();
   await page.click(".sheet >> text=Склеить со следующей");
   ok(await ed(() => window.__ed.lines.length) === n0, "строки склеиваются обратно");
   await page.click(".sheet >> text=Готово");
@@ -198,23 +200,39 @@ async function run(label, viewport, scale) {
   await page.click(".panel .tabs >> text=Шрифт"); await page.click(".fonts >> text=Oswald");
   await page.waitForFunction(() => window.__ed.lines[0].style?.font === "Oswald");
   ok(await ed(() => { const L = window.__ed.lines; return L[1].style?.font === "Oswald" && L[2].style?.font === "Oswald" && window.__ed.P.subs.style.font; }) === gFont, "шрифт сменился только у выбранных строк, остальные и общий стиль не тронуты");
-  await page.click(".scope >> text=Снять");
-  await page.locator(".sub").nth(1).click();
+  await ed(() => window.__ed.subApi.clearSel());
+  const wi = await ed(() => window.__ed.lines.findIndex((l) => l.words.length > 1));
+  await page.locator(".sub").nth(wi).click();
+  await page.click(".scope >> text=Изменить только одно слово");
   await page.locator(".scope .wchip").first().click();
   ok(await ed(() => window.__ed.subApi.scope()) === "word", "можно выбрать одно слово");
   await page.click(".panel .tabs >> text=Цвет");
   await page.locator(".cp-hex").scrollIntoViewIfNeeded(); await page.fill(".cp-hex", "#ff00aa"); await page.locator(".cp-hex").blur();
-  ok(await ed(() => { const l = window.__ed.lines[1]; return l.words[0].style?.color === "#ff00aa" && !l.words[1]?.style && l.style?.color !== "#ff00aa" && window.__ed.P.subs.style.color !== "#ff00aa"; }), "цвет сменился только у одного слова");
-  await ed(() => window.__ed.seek(window.__ed.lines[1].words[0].start + 0.2)); await page.waitForTimeout(300);
+  ok(await page.evaluate((wi) => { const l = window.__ed.lines[wi]; return l.words[0].style?.color === "#ff00aa" && !l.words[1]?.style && l.style?.color !== "#ff00aa" && window.__ed.P.subs.style.color !== "#ff00aa"; }, wi), "цвет сменился только у одного слова");
+  await page.evaluate((wi) => window.__ed.seek(window.__ed.lines[wi].words[0].start + 0.2), wi); await page.waitForTimeout(300);
   await shot("7g-word");
-  // облако под текстом — для всех
   await page.locator(".scope .check").click();
   ok(await ed(() => window.__ed.subApi.scope()) === "all", "галочка возвращает режим «все субтитры»");
-  await page.click(".panel .tabs >> text=Цвет"); await page.click(".panel .seg >> text=Облако");
-  await page.locator('input[aria-label="Плотность"]').fill("0.7"); await page.locator('input[aria-label="Размер облака"]').fill("1.4");
-  ok(await ed(() => window.__ed.P.subs.style.cloud === 0.7 && window.__ed.P.subs.style.cloudSize === 1.4), "облако под текстом: плотность и размер");
-  await ed(() => window.__ed.seek(window.__ed.lines[window.__ed.lines.length - 1].words[0].start + 0.3)); await page.waitForTimeout(300);
+  ok(await page.locator(".sub i.ain").count() > 0, "на плашках субтитров видна длительность анимации");
+  // облако — отдельный объект на своей дорожке
+  await page.click('[data-tool=cloud]'); await page.click("text=Добавить облако здесь");
+  ok(await ed(() => window.__ed.P.clouds.length) === 1 && await page.locator(".cl.sel").count() === 1, "облако добавляется и появляется на своей дорожке");
+  await page.locator('input[aria-label="Плотность"]').fill("0.8"); await page.locator('input[aria-label="Ширина"]').fill("1.1");
+  const c0 = await ed(() => ({ ...window.__ed.P.clouds[0] }));
+  const gr = await page.locator(".cl.sel .g.r").boundingBox();
+  await page.mouse.move(gr.x + 5, gr.y + 10); await page.mouse.down(); await page.mouse.move(gr.x - 25, gr.y + 10, { steps: 4 }); await page.mouse.up();
+  const c1 = await ed(() => ({ ...window.__ed.P.clouds[0] }));
+  ok(c1.end < c0.end - 0.1 && c1.start === c0.start && c1.a === 0.8, `облако укорачивается за край (${(c0.end - c0.start).toFixed(1)} → ${(c1.end - c1.start).toFixed(1)} с)`);
+  const vb = await page.locator(".view canvas").first().boundingBox();
+  await page.mouse.move(vb.x + vb.width / 2, vb.y + vb.height * 0.7); await page.mouse.down(); await page.mouse.move(vb.x + vb.width / 2 + 1, vb.y + vb.height * 0.3, { steps: 4 }); await page.mouse.up();
+  ok(await ed(() => window.__ed.P.clouds[0].y) < c1.y - 0.2, "облако двигается пальцем по видео");
+  await ed(() => window.__ed.seek(window.__ed.P.clouds[0].start + 0.5)); await page.waitForTimeout(300);
   await shot("7h-cloud");
+  await page.click(".guide-btn"); await page.waitForTimeout(200);
+  ok(await page.locator(".guides").isVisible(), "рамка Instagram включается одной кнопкой");
+  await shot("7i-guides");
+  await page.click(".guide-btn");
+  ok(!(await page.locator(".guides").isVisible()), "и выключается той же кнопкой");
   await page.click(".panel-head >> text=Готово");
 
   // воспроизведение через склейку
@@ -250,7 +268,7 @@ async function run(label, viewport, scale) {
   ok(job.output.w === 2160 && job.output.h === 3840 && job.timeline.length === 2 && job.grade.exposure === 0.8 && Object.values(job.clips)[0].file.startsWith("#"), "проект для сборщика лёг в MEGA: 4K, клипы, цвет, имена хешем");
   ok(job.subs && job.subs.lines.length >= 2 && job.subs.lines[0].words[0].text && job.subs.style.font, "субтитры ушли сборщику вместе с проектом");
   ok(job.subs.fonts?.[0]?.path === "Для монтажа ПАК/Шрифты/Мой шрифт.ttf", "сборщику передан путь к своему шрифту в MEGA");
-  ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.style.cloud === 0.7, "свои настройки строк и слов и облако ушли сборщику");
+  ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.clouds?.length === 1 && job.subs.clouds[0].a === 0.8, "свои настройки строк и слов и облако ушли сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');
 

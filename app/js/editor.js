@@ -1,11 +1,11 @@
 // Редактор: превью, таймлайн (резка, обрезка краёв, перестановка), кадр, цвет, звук.
 import { h, icon, sheet, toast, askText, fmtTime, clamp } from "./ui.js";
-import { db, uid } from "./store.js";
+import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
 import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords } from "./media.js";
-import { buildLines, drawSubs, normStyle, PRESETS } from "./subs.mjs";
+import { buildLines, drawSubs, drawClouds, normStyle, PRESETS, CLOUD_DEFAULT } from "./subs.mjs";
 import { useFont } from "./fonts.js";
-import { subsPanel, openLine, openSubsTab } from "./subsui.js";
+import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
 import { openLibrary } from "./library.js";
 import { openExport } from "./export.js";
@@ -26,7 +26,7 @@ const GROUPS = [
 const BAND_COLORS = ["#ff453a", "#ff9f0a", "#ffd60a", "#30d158", "#40c8e0", "#0a84ff", "#bf5af2", "#ff375f"];
 
 export async function openEditor(P, onExit) {
-  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {};
+  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= [];
   const root = document.getElementById("app");
   let t = 0, sel = null, pps = 40, playing = false, pi = 0, panel = null, alive = true, lastTick = 0;
   const undo = [], redo = [];
@@ -49,7 +49,7 @@ export async function openEditor(P, onExit) {
   let shown = null;
 
   // ——— история и сохранение
-  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words });
+  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds });
   let saveT;
   function save() {
     clearTimeout(saveT);
@@ -71,11 +71,13 @@ export async function openEditor(P, onExit) {
     h("div.empty-title", {}, "Начните с видео"),
     h("div.muted", {}, "Возьмите его из MEGA или с этого устройства."),
     h("button.btn.primary.big", { onclick: addMedia }, icon("plus", 20), "Добавить видео"));
-  const view = h("div.view", {}, canvas, over, empty);
+  const guides = h("div.guides", { hidden: true });
+  const guideBtn = h("button.chip.guide-btn", { onclick: () => { settings.set("guides", !settings.get("guides")); fit(); } }, "Рамка");
+  const view = h("div.view", {}, canvas, over, guides, empty, guideBtn);
   const side = h("aside.panel", { hidden: true });
   const tNow = h("span.t-now", {}, "0:00,0"), tAll = h("span.t-all", {}, "0:00");
   const playBtn = h("button.round.play", { onclick: toggle, "aria-label": "Пуск" }, icon("play", 22));
-  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), inner = h("div.tl-inner", {}, ruler, track, subRow);
+  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), cloudRow = h("div.tl-clouds"), inner = h("div.tl-inner", {}, ruler, track, subRow, cloudRow);
   scroll.append(inner);
   const titleBtn = h("button.title", { onclick: rename }, P.name);
   const fmtBtn = h("button.chip", { onclick: pickFormat, "aria-label": "Формат" }, P.format);
@@ -85,7 +87,7 @@ export async function openEditor(P, onExit) {
   const tools = h("nav.tools", {},
     tool("media", "plus", "Медиа", addMedia), tool("split", "split", "Разрезать", split),
     tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("color", "color", "Цвет", () => openPanel("color")),
-    tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
+    tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
   const ed = h("div.ed", {},
     h("header.bar", {},
       h("button.link", { onclick: exit }, icon("back", 20), "Проекты"), titleBtn,
@@ -94,17 +96,17 @@ export async function openEditor(P, onExit) {
     h("div.transport", {}, h("div.times", {}, tNow, h("span.muted", {}, " / "), tAll), playBtn,
       h("div.zoom", {}, h("button.round", { onclick: () => zoom(1 / 1.5), "aria-label": "Мельче" }, icon("zoomout", 18)),
         h("button.round", { onclick: () => zoom(1.5), "aria-label": "Крупнее" }, icon("zoomin", 18)))),
-    h("div.tl", {}, scroll, h("div.tl-head")),
+    h("div.tl", {}, h("div.tl-grab", { title: "Потяните, чтобы изменить высоту дорожек" }), scroll, h("div.tl-head")),
     tools);
   root.replaceChildren(ed);
 
   function syncBar() {
     undoBtn.disabled = !undo.length; redoBtn.disabled = !redo.length;
     const none = !P.clips.length;
-    empty.hidden = !none; canvas.hidden = over.hidden = none;
+    empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = none;
     for (const b of tools.children) {
       const id = b.dataset.tool;
-      b.disabled = id !== "media" && none || id === "delete" && !sel;
+      b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel);
       b.classList.toggle("on", id === panel);
     }
     tAll.textContent = fmtTime(total());
@@ -122,11 +124,27 @@ export async function openEditor(P, onExit) {
     const dpr = Math.min(2, devicePixelRatio || 1), q = Math.min(1, 1080 / (Math.min(cw, ch) * dpr));
     canvas.width = Math.max(2, Math.round(cw * dpr * q)); canvas.height = Math.max(2, Math.round(ch * dpr * q));
     over.style.width = cw + "px"; over.style.height = ch + "px"; over.width = canvas.width; over.height = canvas.height;
+    // рамка Instagram: где интерфейс закрывает картинку (в готовое видео не попадает)
+    const gOn = !!settings.get("guides") && P.clips.length > 0;
+    guides.hidden = !gOn; guideBtn.classList.toggle("on", gOn);
+    guides.style.width = cw + "px"; guides.style.height = ch + "px";
+    guides.replaceChildren(...(P.format === "9:16"
+      ? [h("i.gz", { style: { top: 0, height: "12%" } }, h("b", {}, "шапка")), h("i.gz", { style: { bottom: 0, height: "21%" } }, h("b", {}, "подпись и кнопки")),
+        h("i.gz", { style: { right: 0, width: "15%", top: "45%", height: "34%" } }), h("i.gl", { style: { top: "14.85%" } }, h("b", {}, "лента 4:5")), h("i.gl", { style: { top: "85.15%" } }),
+        h("i.gv", { style: { left: "5.5%" } }), h("i.gv", { style: { left: "94.5%" } })]
+      : [h("i.gv", { style: { left: "5%" } }), h("i.gv", { style: { left: "95%" } }), h("i.gl", { style: { top: "5%" } }), h("i.gl", { style: { top: "95%" } }), h("i.gv.c", { style: { left: "50%" } }), h("i.gl.c", { style: { top: "50%" } })]));
     const pad = scroll.clientWidth / 2;
     inner.style.padding = `0 ${pad}px`;
     scroll.scrollLeft = t * pps;
     draw();
   }
+  const grab = ed.querySelector(".tl-grab"), tl = ed.querySelector(".tl");
+  const setTlh = (v) => { tl.style.height = clamp(v, 96, Math.round(innerHeight * 0.55)) + "px"; };
+  if (settings.get("tlh")) setTlh(settings.get("tlh"));
+  let gdrag = null;
+  grab.addEventListener("pointerdown", (e) => { gdrag = { y: e.clientY, h: tl.offsetHeight }; grab.setPointerCapture(e.pointerId); });
+  grab.addEventListener("pointermove", (e) => { if (gdrag) setTlh(gdrag.h + gdrag.y - e.clientY); });
+  grab.addEventListener("pointerup", () => { if (gdrag) { settings.set("tlh", tl.offsetHeight); gdrag = null; } });
   const ro = new ResizeObserver(fit); ro.observe(view); ro.observe(scroll);
 
   // ——— видео
@@ -172,6 +190,7 @@ export async function openEditor(P, onExit) {
     else R.draw(null);
     const c2 = over.getContext("2d");
     c2.clearRect(0, 0, over.width, over.height);
+    drawClouds(c2, over.width, over.height, t, P.clouds);
     if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
   }
   function seek(time, fromScroll) {
@@ -244,8 +263,54 @@ export async function openEditor(P, onExit) {
     subRow.hidden = !lines.length;
     subRow.classList.toggle("off", !P.subs?.on);
     subRow.replaceChildren(...lines.map((l, i) => h("button.sub" + (isSel(l) ? ".sel" : "") + (l.style || l.words.some((w) => w.style) ? ".own" : ""), { "data-i": i,
-      style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" } }, l.words.map((w) => w.text).join(" "))));
+      style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" } }, l.words.map((w) => w.text).join(" "), ...animBars(l))));
   }
+  // полоски на плашке: сколько длится появление и исчезание
+  function animBars(l) {
+    const st = normStyle({ ...(P.subs.style || {}), ...(l.style || {}) }), len = l.end - l.start, out = [];
+    if (st.in !== "none") out.push(h("i.ain", { style: { width: Math.min(len, st.inDur) * pps + "px" } }));
+    if (st.out !== "none") out.push(h("i.aout", { style: { width: Math.min(len, st.outDur) * pps + "px" } }));
+    return out;
+  }
+  // ——— облака: отдельные объекты на своей дорожке
+  let cloudSel = null, cdrag = null;
+  function layoutClouds() {
+    cloudRow.style.width = total() * pps + "px"; cloudRow.hidden = !P.clouds.length;
+    cloudRow.replaceChildren(...P.clouds.map((c) => h("div.cl" + (c.id === cloudSel ? ".sel" : ""), { "data-id": c.id, style: { left: c.start * pps + "px", width: Math.max(8, (c.end - c.start) * pps - 2) + "px" } },
+      h("span", {}, "Облако"), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }))));
+  }
+  function addCloud() {
+    begin(); pause();
+    const start = Math.min(t, Math.max(0, total() - 0.5)), c = { id: uid(), start, end: Math.min(total(), start + 3), ...CLOUD_DEFAULT, y: subStyle().y };
+    P.clouds.push(c); cloudSel = c.id; layoutClouds(); draw(); renderPanel(); syncBar(); save();
+  }
+  function removeCloud() { begin(); P.clouds = P.clouds.filter((c) => c.id !== cloudSel); cloudSel = null; layoutClouds(); draw(); renderPanel(); syncBar(); save(); }
+  cloudRow.addEventListener("click", (e) => {
+    const el = e.target.closest(".cl"); if (!el || cloudRow.dataset.drag) return;
+    e.stopPropagation(); cloudSel = el.dataset.id; pause();
+    const c = P.clouds.find((x) => x.id === cloudSel); if (t < c.start || t >= c.end) seek(c.start + Math.min(0.3, (c.end - c.start) / 2));
+    if (panel !== "cloud") { panel = "cloud"; requestAnimationFrame(fit); }
+    layoutClouds(); renderPanel(); syncBar();
+  });
+  cloudRow.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".cl.sel"); if (!el || e.button > 0) return;
+    const c = P.clouds.find((x) => x.id === el.dataset.id);
+    e.preventDefault(); pause();
+    cdrag = { c, el, side: e.target.dataset.side || "m", x: e.clientX, s0: c.start, e0: c.end, id: e.pointerId, moved: false };
+    cloudRow.setPointerCapture(e.pointerId);
+  });
+  cloudRow.addEventListener("pointermove", (e) => {
+    if (!cdrag || e.pointerId !== cdrag.id) return;
+    const d = (e.clientX - cdrag.x) / pps, c = cdrag.c, tot = total(), len = cdrag.e0 - cdrag.s0;
+    if (!cdrag.moved) { if (Math.abs(e.clientX - cdrag.x) < 4) return; cdrag.moved = true; begin(); }
+    if (cdrag.side === "l") c.start = clamp(cdrag.s0 + d, 0, c.end - 0.2);
+    else if (cdrag.side === "r") c.end = clamp(cdrag.e0 + d, c.start + 0.2, tot);
+    else { c.start = clamp(cdrag.s0 + d, 0, Math.max(0, tot - len)); c.end = c.start + len; }
+    cdrag.el.style.left = c.start * pps + "px"; cdrag.el.style.width = Math.max(8, (c.end - c.start) * pps - 2) + "px";
+    draw();
+  });
+  const cdragEnd = (e) => { if (!cdrag || e.pointerId !== cdrag.id) return; const m = cdrag.moved; cdrag = null; if (m) { cloudRow.dataset.drag = "1"; setTimeout(() => delete cloudRow.dataset.drag, 60); layoutClouds(); draw(); save(); } };
+  cloudRow.addEventListener("pointerup", cdragEnd); cloudRow.addEventListener("pointercancel", cdragEnd);
   function pickLine(i, e) {
     const l = lines[i]; if (!l) return;
     if (e && e.shiftKey && lastPick != null) { const [a, b] = [Math.min(lastPick, i), Math.max(lastPick, i)]; subSel = [...new Set([...subSel, ...lines.slice(a, b + 1).map(lineId)])]; }
@@ -383,7 +448,7 @@ export async function openEditor(P, onExit) {
     const marks = [];
     for (let s = 0; s <= tot + 1e-6; s += step) marks.push(h("span", { style: { left: s * pps + "px" } }, step < 1 ? fmtTime(s, true) : fmtTime(s)));
     ruler.replaceChildren(...marks); ruler.style.width = tot * pps + "px";
-    relines(); layoutBusy(); syncBar();
+    relines(); layoutClouds(); layoutBusy(); syncBar();
   }
   function layoutBusy() {
     for (const el of track.querySelectorAll(".clip")) {
@@ -425,7 +490,7 @@ export async function openEditor(P, onExit) {
     for (const c of track.querySelectorAll(".clip")) c.classList.toggle("sel", c.dataset.id === sel);
     syncBar();
   });
-  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow) { sel = null; layout(); } });
+  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow) { sel = null; layout(); } });
   track.addEventListener("pointerdown", (e) => {
     const el = e.target.closest(".clip");
     if (!el || e.button > 0) return;
@@ -504,6 +569,7 @@ export async function openEditor(P, onExit) {
     sel = b.id; layout(); seek(t); save();
   }
   function remove() {
+    if (panel === "cloud" && cloudSel) return removeCloud();
     const i = P.clips.findIndex((c) => c.id === sel);
     if (i < 0) return;
     begin(); pause();
@@ -598,6 +664,18 @@ export async function openEditor(P, onExit) {
       }
       subApi.slider = slider; subApi.head = head;
       side.replaceChildren(...subsPanel(subApi).flat(9).filter(Boolean));
+    } else if (panel === "cloud") {
+      const c = P.clouds.find((x) => x.id === cloudSel);
+      const csl = (label, key, min, max, show) => slider(label, () => c[key] ?? CLOUD_DEFAULT[key], (v) => { c[key] = v; }, { min, max, def: CLOUD_DEFAULT[key], show });
+      side.replaceChildren(head("Облако"),
+        h("p.hint", {}, "Мягкое затемнение, чтобы текст читался на любом фоне. Живёт на своей дорожке: его можно двигать по времени, растягивать за края и удалять."),
+        h("button.btn.primary.wide", { onclick: addCloud }, icon("plus", 18), "Добавить облако здесь"),
+        ...(c ? [h("p.hint", {}, "Двигайте облако пальцем прямо на видео, двумя пальцами — размер."),
+          csl("Плотность", "a", 0.05, 1), csl("Ширина", "w", 0.1, 1.6), csl("Высота", "h", 0.03, 1.2), csl("Мягкость края", "soft", 0.05, 1),
+          csl("Плавное появление", "fade", 0, 1.5, (v) => v.toFixed(2).replace(".", ",") + " с"),
+          h("div.sl-top", {}, "Цвет"), colorPicker(() => c.color || "#000000", (v) => { c.color = v; draw(); save(); }, begin),
+          h("button.btn.wide.danger", { onclick: removeCloud }, "Удалить облако")]
+          : [P.clouds.length ? h("p.hint", {}, "Чтобы изменить облако, нажмите на него на дорожке внизу.") : null].filter(Boolean)));
     } else if (panel === "sound") {
       side.replaceChildren(head("Звук"),
         slider("Громкость", () => P.volume, (v) => { P.volume = v; setVolume(); }, { min: 0, max: 2, def: 1, show: (v) => Math.round(v * 100) + " %" }),
@@ -607,13 +685,15 @@ export async function openEditor(P, onExit) {
   // кадр пальцами на превью
   const ptrs = new Map(); let g0 = null;
   canvas.addEventListener("pointerdown", (e) => {
-    const mode = panel === "frame" ? "frame" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
+    const cl = panel === "cloud" && P.clouds.find((x) => x.id === cloudSel);
+    const mode = panel === "frame" ? "frame" : cl ? "cloud" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
     if (!mode) { if (ptrs.size === 0) toggle(); return; }
     const c = mode === "frame" ? target() : null; if (mode === "frame" && !c) return;
     canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e);
     if (mode === "frame" && ptrs.size === 1) begin();
     const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
     if (mode === "frame") g0 = { mode, c, fr: { ...(c.frame ||= { ...FRAME_DEFAULT }) }, x: ps[0].clientX, y: ps[0].clientY, d };
+    else if (mode === "cloud") g0 = { mode, cl, s0: { x: cl.x, y: cl.y, w: cl.w, h: cl.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else { const st = subApi.cur(); g0 = { mode, s0: { x: st.x, y: st.y, size: st.size }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
   });
   canvas.addEventListener("pointermove", (e) => {
@@ -624,6 +704,11 @@ export async function openEditor(P, onExit) {
     if (g0.mode === "frame") {
       const fr = g0.c.frame;
       if (k) fr.scale = clamp(g0.fr.scale * k, 0.2, 4); else { fr.x = clamp(g0.fr.x + dx, -1, 1); fr.y = clamp(g0.fr.y + dy, -1, 1); }
+    } else if (g0.mode === "cloud") {
+      if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
+      const c = g0.cl;
+      if (k) { c.w = clamp(g0.s0.w * k, 0.1, 1.6); c.h = clamp(g0.s0.h * k, 0.03, 1.2); }
+      else { const x = clamp(g0.s0.x + dx, 0, 1); c.x = Math.abs(x - 0.5) < 0.02 ? 0.5 : x; c.y = clamp(g0.s0.y + dy, 0, 1); }
     } else {
       if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
       const st = subApi.st();
@@ -636,7 +721,7 @@ export async function openEditor(P, onExit) {
     if (!ptrs.delete(e.pointerId)) return;
     const g = g0; if (!ptrs.size) g0 = null;
     if (ptrs.size) return;
-    if (g?.mode === "subs" && !g.moved) return toggle();
+    if ((g?.mode === "subs" || g?.mode === "cloud") && !g.moved) return toggle();
     renderPanel(); save();
   };
   canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
@@ -660,5 +745,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }
