@@ -50,8 +50,13 @@ let tab = 0, colorTab = 0, animTab = 0, fontQuery = "", packList = null, packLoc
 // api: { P, cur, st, lines, change(fn), live(), begin, slider, head, rerender, seek, playLine, makeSubs, making, toastErr }
 export function subsPanel(api) {
   const { P, change, live, begin, slider, head, rerender } = api, cur = api.cur(), st = api.st;
-  const lines = api.lines();
-  const sl = (label, key, min, max, show, step) => slider(label, () => api.cur()[key], (v) => { st()[key] = v; live(); }, { min, max, step, def: SUB_DEFAULT[key], show });
+  const lines = api.lines(), scope = api.scope(), wordMode = scope === "word";
+  const GATE = ["cloud", "stroke", "bg", "shadow", "glow"];   // ползунки, которые открывают дополнительные настройки
+  const sl = (label, key, min, max, show, step) => {
+    const el = slider(label, () => api.cur()[key], (v) => { st()[key] = v; live(); }, { min, max, step, def: SUB_DEFAULT[key], show });
+    if (GATE.includes(key)) el.querySelector("input").addEventListener("change", rerender);
+    return el;
+  };
   const pct = (v) => Math.round(v * 100), sec = (v) => v.toFixed(2).replace(".", ",") + " с";
   const seg = (items, on, pick, scroll = true) => h("div.seg" + (scroll ? ".scroll" : ""), {}, items.map(([k, n]) => h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k) }, n)));
   const picker = (key) => colorPicker(() => api.cur()[key] || "#ffffff", (c) => { st()[key] = c; live(); }, begin);
@@ -61,8 +66,7 @@ export function subsPanel(api) {
 
   if (tab === 0) {            // ——— стили
     const mine = settings.get("subStyles") || [];
-    const keep = () => ({ x: cur.x, y: cur.y, rot: cur.rot, shift: cur.shift });
-    const apply = (v) => { useFont(v.font).catch(() => {}); change(() => { P.subs.style = { ...v, ...keep() }; }); api.playLine(); };
+    const apply = (v) => { useFont(v.font).catch(() => {}); change(() => api.applyStyle(v)); api.playLine(); };
     const same = (v) => Object.keys(v).every((k) => ["x", "y", "rot", "shift"].includes(k) || cur[k] === v[k]);
     const tile = (name, v, del) => {
       const cv = h("canvas", { width: 320, height: 120 });
@@ -84,7 +88,7 @@ export function subsPanel(api) {
       sl("Букв в строке", "maxChars", 1, 40, (v) => Math.round(v), 1),
       seg([["none", "Как есть"], ["upper", "ЗАГЛАВНЫЕ"], ["lower", "строчные"]], cur.case, (k) => change(() => st().case = k), false),
       toggle("Знаки препинания", "punct"),
-      sl("Сдвиг по времени", "shift", -0.5, 0.5, (v) => (v > 0 ? "+" : "") + sec(v)),
+      slider("Сдвиг всех субтитров по времени", () => api.gst().shift || 0, (v) => { api.gst().shift = v; live(); }, { min: -0.5, max: 0.5, def: 0, show: (v) => (v > 0 ? "+" : "") + sec(v) }),
       h("button.btn.wide", { onclick: api.makeSubs, disabled: api.making }, "Распознать речь заново")];
   } else if (tab === 2) {     // ——— шрифт
     const setFont = async (name) => { try { api.busy(true); await useFont(name); packLocal.add(name); change(() => st().font = name); } catch (e) { toast(e.message, 5000); rerender(); } finally { api.busy(false); } };
@@ -103,20 +107,24 @@ export function subsPanel(api) {
           shown.length > 60 && h("p.hint", {}, `Показаны первые 60 из ${shown.length}. Уточните поиск.`),
           h("p.hint", {}, "Серые ещё не скачаны: нажмите — шрифт загрузится и применится. Если вместо русских букв другой шрифт, значит в этом шрифте нет кириллицы.")],
       sl("Размер", "size", 0.025, 0.2, (v) => Math.round(v * 1000)),
-      sl("Ширина букв", "sx", 0.4, 2.5, pct), sl("Высота букв", "sy", 0.4, 3, pct),
+      wordMode && toggle("Наклон (курсив)", "italic"),
+      !wordMode && [sl("Ширина букв", "sx", 0.4, 2.5, pct), sl("Высота букв", "sy", 0.4, 3, pct),
       sl("Между буквами", "ls", -0.08, 0.6, pct), sl("Между словами", "ws", -0.25, 1.5, pct), sl("Между строками", "lh", 0.7, 3, pct),
       sl("Ширина текста на экране", "wrap", 0.3, 1, pct),
       seg([["left", "Влево"], ["center", "По центру"], ["right", "Вправо"]], cur.align, (k) => change(() => st().align = k), false),
       toggle("Наклон (курсив)", "italic"),
       h("p.hint", {}, "Положение: двигайте субтитры пальцем прямо на видео, двумя пальцами — размер."),
       sl("Высота на экране", "y", 0.05, 0.95, (v) => Math.round((1 - v) * 100)), sl("Поворот", "rot", -45, 45, (v) => Math.round(v) + "°", 1),
-      h("button.btn.wide", { onclick: () => change(() => Object.assign(st(), { x: 0.5, rot: 0 })) }, "Поставить по центру")];
+      h("button.btn.wide", { onclick: () => change(() => Object.assign(st(), { x: 0.5, rot: 0 })) }, "Поставить по центру")]];
   } else if (tab === 3) {     // ——— цвет
-    const parts = [["text", "Текст"], ["stroke", "Обводка"], ["bg", "Фон"], ["shadow", "Тень"], ["glow", "Свечение"]];
+    const parts = wordMode ? [["text", "Текст"], ["stroke", "Обводка"]] : [["text", "Текст"], ["cloud", "Облако"], ["stroke", "Обводка"], ["bg", "Плашка"], ["shadow", "Тень"], ["glow", "Свечение"]];
+    if (colorTab >= parts.length) colorTab = 0;
     const k = parts[colorTab][0];
     body = [seg(parts, k, (x) => { colorTab = parts.findIndex((p) => p[0] === x); rerender(); }),
-      k === "text" ? [picker("color"), h("button.check" + (cur.color2 ? ".on" : ""), { onclick: () => change(() => st().color2 = cur.color2 ? "" : "#ff375f") }, h("i", {}, cur.color2 ? icon("check", 14) : null), "Градиент (второй цвет снизу)"), cur.color2 && picker("color2"), sl("Непрозрачность", "opacity", 0.1, 1, pct)]
-      : k === "stroke" ? [sl("Толщина", "stroke", 0, 0.4, pct), cur.stroke > 0 && picker("strokeColor")]
+      k === "text" ? [picker("color"), h("button.check" + (cur.color2 ? ".on" : ""), { onclick: () => change(() => st().color2 = cur.color2 ? "" : "#ff375f") }, h("i", {}, cur.color2 ? icon("check", 14) : null), "Градиент (второй цвет снизу)"), cur.color2 && picker("color2"), !wordMode && sl("Непрозрачность", "opacity", 0.1, 1, pct)]
+      : k === "cloud" ? [h("p.hint", {}, "Мягкое овальное затемнение под текстом — чтобы буквы читались на любом фоне."),
+        sl("Плотность", "cloud", 0, 1, pct), cur.cloud > 0 && [sl("Размер облака", "cloudSize", 0.5, 3, pct), sl("Высота облака", "cloudTall", 0.5, 3, pct), sl("Мягкость края", "cloudSoft", 0.05, 1, pct), h("div.sl-top", {}, "Цвет облака"), picker("cloudColor")]]
+      : k === "stroke" ? [!wordMode && sl("Толщина", "stroke", 0, 0.4, pct), (wordMode || cur.stroke > 0) && picker("strokeColor")]
       : k === "bg" ? [sl("Плотность фона", "bg", 0, 1, pct), cur.bg > 0 && [picker("bgColor"), sl("Скругление", "bgRadius", 0, 0.7, pct), sl("Отступ", "bgPad", 0, 0.6, pct)]]
       : k === "shadow" ? [sl("Сила тени", "shadow", 0, 1, pct), cur.shadow > 0 && [sl("Размытие", "shadowBlur", 0, 1, pct), picker("shadowColor")]]
       : [sl("Сила свечения", "glow", 0, 1, pct), cur.glow > 0 && picker("glowColor")]];
@@ -133,10 +141,25 @@ export function subsPanel(api) {
         h("div.sl-top", {}, "Цвет ключевых слов"), h("p.hint", {}, "Ключевое слово отмечается в строке: вкладка «Текст» → нажать на строку → нажать на слово."), picker("emColor")]];
   }
   const TABS = ["Стили", "Текст", "Шрифт", "Цвет", "Анимация"];
-  return [head("Субтитры"),
-    h("div.seg.scroll.tabs", {}, TABS.map((n, i) => h("button" + (i === tab ? ".on" : ""), { onclick: () => { tab = i; rerender(); } }, n))),
+  const allowed = wordMode ? [2, 3] : [0, 1, 2, 3, 4];
+  if (!allowed.includes(tab)) { tab = allowed[0]; return subsPanel(api); }
+  // ——— что меняем: все субтитры, выбранные или одно слово
+  const sel = api.selLines(), one = sel.length === 1 ? sel[0] : null;
+  const own = sel.some((l) => l.style || l.words.some((w) => w.style));
+  const scopeBox = h("div.scope" + (api.all ? "" : ".part"), {},
+    h("button.check" + (api.all ? ".on" : ""), { onclick: () => api.setAll(!api.all) }, h("i", {}, api.all ? icon("check", 14) : null), "Менять все субтитры сразу"),
+    !api.all && [
+      h("div.scope-info", {}, h("span", {}, !sel.length ? "Нажмите на субтитр на дорожке внизу. Можно выбрать несколько." : wordMode ? "Меняется одно слово" : sel.length === 1 ? "Меняется одна строка" : `Меняются строки: ${sel.length}`),
+        sel.length > 0 && h("button.link", { onclick: api.clearSel }, "Снять")),
+      one && h("div.wrow", {}, h("small.muted", {}, "Только слово:"), P.words[one.key].slice(one.i0, one.i1 + 1).map((w, k) =>
+        h("button.wchip.sm" + (api.word && api.word.idx === one.i0 + k ? ".on" : ""), { onclick: () => api.setWord(api.word && api.word.idx === one.i0 + k ? null : one.i0 + k) }, w.text))),
+      (one || own) && h("div.row-btns", {},
+        one && h("button.btn.sm", { onclick: () => openLine(api, lines.indexOf(one)) }, "Текст строки"),
+        own && h("button.btn.sm", { onclick: () => change(() => api.resetOwn()) }, wordMode ? "Вернуть слову общий вид" : "Вернуть общий вид"))]);
+  return [head("Субтитры"), scopeBox,
+    h("div.seg.scroll.tabs", {}, TABS.map((n, i) => allowed.includes(i) && h("button" + (i === tab ? ".on" : ""), { onclick: () => { tab = i; rerender(); } }, n))),
     h("div.sliders", {}, body),
-    h("button.btn.wide", { onclick: () => change(() => P.subs.on = !P.subs.on) }, P.subs.on ? "Скрыть субтитры" : "Показать субтитры")];
+    api.all && h("button.btn.wide", { onclick: () => change(() => P.subs.on = !P.subs.on) }, P.subs.on ? "Скрыть субтитры" : "Показать субтитры")];
 }
 export const openSubsTab = (i) => { tab = i; };
 
@@ -155,7 +178,7 @@ export function openLine(api, index) {
       if (txt === l.raw) return false;
       const a = src[l.i0].start, b = src[l.i1].end, parts = txt.split(/\s+/).filter(Boolean);
       change(() => src.splice(l.i0, n, ...(parts.length === n ? parts.map((x, k) => ({ ...src[l.i0 + k], text: x }))
-        : parts.map((x, k) => ({ text: x, start: a + (b - a) * k / parts.length, end: a + (b - a) * (k + 1) / parts.length })))));
+        : parts.map((x, k) => ({ text: x, start: a + (b - a) * k / parts.length, end: a + (b - a) * (k + 1) / parts.length, ...(k === 0 && src[l.i0].ls ? { ls: src[l.i0].ls } : {}) })))));
       return true;
     };
     const nudge = (which, d) => change(() => { const w = which ? src[l.i1] : src[l.i0]; if (which) w.end = Math.max(w.start + 0.05, w.end + d); else w.start = Math.max(0, Math.min(w.end - 0.05, w.start + d)); });

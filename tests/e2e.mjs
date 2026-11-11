@@ -171,7 +171,7 @@ async function run(label, viewport, scale) {
   ok(col !== "#12ab34" && /^#[0-9a-f]{6}$/.test(col), `цвет выбирается на палитре (${col})`);
   await page.locator(".cp-hue").fill("200"); await page.waitForTimeout(100);
   await shot("7d-color");
-  await page.click(".panel .seg >> text=Фон"); await page.locator('input[aria-label="Плотность фона"]').fill("0.7");
+  await page.click(".panel .seg >> text=Плашка"); await page.locator('input[aria-label="Плотность фона"]').fill("0.7");
   await page.click(".panel .seg >> text=Свечение"); await page.locator('input[aria-label="Сила свечения"]').fill("0.5");
   // анимация
   await page.click(".panel .tabs >> text=Анимация");
@@ -188,6 +188,33 @@ async function run(label, viewport, scale) {
   ok(y1 < y0 - 0.1 && await ed(() => window.__ed.P.subs.style.x) === 0.5, `субтитры двигаются пальцем по видео (${y0.toFixed(2)} → ${y1.toFixed(2)}), по центру «прилипают»`);
   await ed(() => window.__ed.seek(window.__ed.lines[0].words[0].start + 0.3)); await page.waitForTimeout(300);
   await shot("7f-moved");
+  // только выбранные субтитры и одно слово
+  await page.evaluate(() => document.querySelector(".tl-scroll").scrollTo(0, 0)); await page.waitForTimeout(200);
+  const gFont = await ed(() => window.__ed.P.subs.style.font);
+  await page.locator(".sub").nth(0).click();
+  ok(await ed(() => window.__ed.subApi.scope()) === "lines" && await page.locator(".sub.sel").count() === 1, "нажатие на субтитр выбирает его, галочка «все сразу» снимается");
+  await page.locator(".sub").nth(2).click({ modifiers: ["Shift"] });
+  ok(await page.locator(".sub.sel").count() === 3, "Shift + нажатие выбирает несколько подряд");
+  await page.click(".panel .tabs >> text=Шрифт"); await page.click(".fonts >> text=Oswald");
+  await page.waitForFunction(() => window.__ed.lines[0].style?.font === "Oswald");
+  ok(await ed(() => { const L = window.__ed.lines; return L[1].style?.font === "Oswald" && L[2].style?.font === "Oswald" && window.__ed.P.subs.style.font; }) === gFont, "шрифт сменился только у выбранных строк, остальные и общий стиль не тронуты");
+  await page.click(".scope >> text=Снять");
+  await page.locator(".sub").nth(1).click();
+  await page.locator(".scope .wchip").first().click();
+  ok(await ed(() => window.__ed.subApi.scope()) === "word", "можно выбрать одно слово");
+  await page.click(".panel .tabs >> text=Цвет");
+  await page.locator(".cp-hex").scrollIntoViewIfNeeded(); await page.fill(".cp-hex", "#ff00aa"); await page.locator(".cp-hex").blur();
+  ok(await ed(() => { const l = window.__ed.lines[1]; return l.words[0].style?.color === "#ff00aa" && !l.words[1]?.style && l.style?.color !== "#ff00aa" && window.__ed.P.subs.style.color !== "#ff00aa"; }), "цвет сменился только у одного слова");
+  await ed(() => window.__ed.seek(window.__ed.lines[1].words[0].start + 0.2)); await page.waitForTimeout(300);
+  await shot("7g-word");
+  // облако под текстом — для всех
+  await page.locator(".scope .check").click();
+  ok(await ed(() => window.__ed.subApi.scope()) === "all", "галочка возвращает режим «все субтитры»");
+  await page.click(".panel .tabs >> text=Цвет"); await page.click(".panel .seg >> text=Облако");
+  await page.locator('input[aria-label="Плотность"]').fill("0.7"); await page.locator('input[aria-label="Размер облака"]').fill("1.4");
+  ok(await ed(() => window.__ed.P.subs.style.cloud === 0.7 && window.__ed.P.subs.style.cloudSize === 1.4), "облако под текстом: плотность и размер");
+  await ed(() => window.__ed.seek(window.__ed.lines[window.__ed.lines.length - 1].words[0].start + 0.3)); await page.waitForTimeout(300);
+  await shot("7h-cloud");
   await page.click(".panel-head >> text=Готово");
 
   // воспроизведение через склейку
@@ -223,6 +250,7 @@ async function run(label, viewport, scale) {
   ok(job.output.w === 2160 && job.output.h === 3840 && job.timeline.length === 2 && job.grade.exposure === 0.8 && Object.values(job.clips)[0].file.startsWith("#"), "проект для сборщика лёг в MEGA: 4K, клипы, цвет, имена хешем");
   ok(job.subs && job.subs.lines.length >= 2 && job.subs.lines[0].words[0].text && job.subs.style.font, "субтитры ушли сборщику вместе с проектом");
   ok(job.subs.fonts?.[0]?.path === "Для монтажа ПАК/Шрифты/Мой шрифт.ttf", "сборщику передан путь к своему шрифту в MEGA");
+  ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.style.cloud === 0.7, "свои настройки строк и слов и облако ушли сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');
 

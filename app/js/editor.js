@@ -230,26 +230,88 @@ export async function openEditor(P, onExit) {
   let lines = [];
   const subStyle = () => normStyle(P.subs?.style);
   function loadFont(name) { useFont(name).then(draw).catch(() => {}); }
+  // что меняем: все субтитры, выбранные строки или одно слово
+  let subAll = true, subSel = [], subWord = null, lastPick = null;
+  const lineId = (l) => l.key + ":" + l.i0;
+  const isSel = (l) => subSel.includes(lineId(l));
+  const selLines = () => lines.filter(isSel);
   function relines() {
     lines = P.subs ? buildLines(P.clips, P.words, P.subs.style) : [];
-    if (P.subs) loadFont(subStyle().font);
+    subSel = subSel.filter((id) => lines.some((l) => lineId(l) === id));
+    if (subWord && !(selLines().length === 1 && subWord.idx >= selLines()[0].i0 && subWord.idx <= selLines()[0].i1 && subWord.key === selLines()[0].key)) subWord = null;
+    if (P.subs) for (const f of new Set([subStyle().font, ...lines.flatMap((l) => [l.style?.font, ...l.words.map((w) => w.style?.font)])])) if (f) loadFont(f);
     subRow.style.width = total() * pps + "px";
     subRow.hidden = !lines.length;
     subRow.classList.toggle("off", !P.subs?.on);
-    subRow.replaceChildren(...lines.map((l, i) => h("button.sub", { style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" }, onclick: (e) => { e.stopPropagation(); pause(); seek(l.start + 0.02); openLine(subApi, i); } }, l.words.map((w) => w.text).join(" "))));
+    subRow.replaceChildren(...lines.map((l, i) => h("button.sub" + (isSel(l) ? ".sel" : "") + (l.style || l.words.some((w) => w.style) ? ".own" : ""), { "data-i": i,
+      style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" } }, l.words.map((w) => w.text).join(" "))));
   }
+  function pickLine(i, e) {
+    const l = lines[i]; if (!l) return;
+    if (e && e.shiftKey && lastPick != null) { const [a, b] = [Math.min(lastPick, i), Math.max(lastPick, i)]; subSel = [...new Set([...subSel, ...lines.slice(a, b + 1).map(lineId)])]; }
+    else subSel = isSel(l) ? subSel.filter((id) => id !== lineId(l)) : [...subSel, lineId(l)];
+    lastPick = i; subWord = null; subAll = !subSel.length && subAll;
+    if (subSel.length) subAll = false;
+    pause(); if (isSel(l)) seek(l.start + Math.min(0.3, (l.end - l.start) / 2));
+    if (panel !== "subs") { panel = "subs"; requestAnimationFrame(fit); }
+    relines(); renderPanel(); syncBar();
+  }
+  subRow.addEventListener("click", (e) => { if (subRow.dataset.lasso) return; const b = e.target.closest(".sub"); if (b) { e.stopPropagation(); pickLine(+b.dataset.i, e); } });
+  subRow.addEventListener("dblclick", (e) => { const b = e.target.closest(".sub"); if (b) { e.stopPropagation(); const l = lines[+b.dataset.i]; subSel = [lineId(l)]; subAll = false; relines(); renderPanel(); openLine(subApi, +b.dataset.i); } });
+  // мышь: протянуть по дорожке субтитров — выбрать несколько подряд
+  let lasso = null;
+  subRow.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse" || e.button) return; lasso = { x: e.clientX, id: e.pointerId, on: false, box: null }; });
+  subRow.addEventListener("pointermove", (e) => {
+    if (!lasso || e.pointerId !== lasso.id) return;
+    if (!lasso.on) { if (Math.abs(e.clientX - lasso.x) < 6) return; lasso.on = true; subRow.setPointerCapture(e.pointerId); lasso.box = h("div.lasso"); subRow.append(lasso.box); }
+    const r = subRow.getBoundingClientRect(), a = Math.min(lasso.x, e.clientX) - r.left, b = Math.max(lasso.x, e.clientX) - r.left;
+    lasso.box.style.left = a + "px"; lasso.box.style.width = b - a + "px";
+    for (const c of subRow.querySelectorAll(".sub")) { const l = lines[+c.dataset.i], hit = l.end * pps > a && l.start * pps < b; c.classList.toggle("sel", hit); }
+  });
+  const lassoEnd = (e) => {
+    if (!lasso || e.pointerId !== lasso.id) return;
+    const was = lasso; lasso = null;
+    if (!was.on) return;
+    subSel = [...subRow.querySelectorAll(".sub.sel")].map((c) => lineId(lines[+c.dataset.i]));
+    subAll = !subSel.length; subWord = null;
+    subRow.dataset.lasso = "1"; setTimeout(() => delete subRow.dataset.lasso, 60);
+    if (panel !== "subs") { panel = "subs"; requestAnimationFrame(fit); }
+    relines(); renderPanel(); syncBar();
+  };
+  subRow.addEventListener("pointerup", lassoEnd); subRow.addEventListener("pointercancel", lassoEnd);
   // показать анимацию: проиграть строку под линией
   let stopAt = null;
   function playLine() {
-    const l = lines.find((x) => t >= x.start - 0.05 && t < x.end) || lines.find((x) => x.start >= t) || lines[0];
+    const l = (!subAll && selLines()[0]) || lines.find((x) => t >= x.start - 0.05 && t < x.end) || lines.find((x) => x.start >= t) || lines[0];
     if (!l) return;
     pause(); seek(Math.max(0, l.start - 0.05)); stopAt = l.end + 0.05; play();
   }
+  const POS = ["x", "y", "rot", "shift"];
+  // куда записываются изменения: общий стиль, свои настройки выбранных строк (у первого слова строки) или одного слова
+  const targets = () => {
+    if (subAll || !P.subs) return [P.subs.style ||= {}];
+    if (subWord) return [(P.words[subWord.key][subWord.idx].ws ||= {})];
+    return selLines().map((l) => (P.words[l.key][l.i0].ls ||= {}));
+  };
   const subApi = {
-    P, cur: subStyle, st: () => (P.subs.style ||= {}), lines: () => lines, begin,
+    P, lines: () => lines, begin, seek, playLine,
+    get all() { return subAll; }, get word() { return subWord; }, selLines,
+    scope: () => (subAll ? "all" : subWord ? "word" : "lines"),
+    setAll(v) { subAll = v; subWord = null; if (!v && !subSel.length) { const l = lines.find((x) => t >= x.start && t < x.end) || lines.find((x) => x.start >= t) || lines[0]; if (l) subSel = [lineId(l)]; } if (v) subSel = []; relines(); renderPanel(); },
+    setWord(idx) { const l = selLines()[0]; subWord = idx == null || !l ? null : { key: l.key, idx }; renderPanel(); },
+    clearSel() { subSel = []; subWord = null; relines(); renderPanel(); },
+    // настройки, которые сейчас видит панель
+    cur: () => { const l = !subAll && selLines()[0]; const w = l && subWord && P.words[subWord.key][subWord.idx]; return normStyle({ ...(P.subs?.style || {}), ...((l && l.style) || {}), ...((w && w.ws) || {}) }); },
+    st: () => new Proxy({}, { set: (_, k, v) => { for (const o of targets()) o[k] = v; return true; }, get: (_, k) => subApi.cur()[k] }),
+    gst: () => (P.subs.style ||= {}),
+    applyStyle(v) {
+      if (subAll) { const c = subStyle(), keep = {}; for (const k of POS) keep[k] = c[k]; P.subs.style = { ...v, ...keep }; }
+      else for (const l of selLines()) { const w = P.words[l.key][l.i0], keep = {}; for (const k of POS) if (w.ls && k in w.ls) keep[k] = w.ls[k]; w.ls = { ...v, ...keep }; }
+    },
+    resetOwn() { for (const l of selLines()) { if (subWord) delete P.words[subWord.key][subWord.idx].ws; else { for (let k = l.i0; k <= l.i1; k++) { delete P.words[l.key][k].ls; delete P.words[l.key][k].ws; } } } },
     change: (fn) => { begin(); fn(); relines(); draw(); renderPanel(); save(); },
     live: () => { relines(); draw(); save(); },
-    rerender: () => { if (panel === "subs") renderPanel(); }, seek, playLine,
+    rerender: () => { if (panel === "subs") renderPanel(); },
     busy: () => {}, get making() { return making; }, makeSubs: () => makeSubs(),
   };
   let making = false;
@@ -552,7 +614,7 @@ export async function openEditor(P, onExit) {
     if (mode === "frame" && ptrs.size === 1) begin();
     const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
     if (mode === "frame") g0 = { mode, c, fr: { ...(c.frame ||= { ...FRAME_DEFAULT }) }, x: ps[0].clientX, y: ps[0].clientY, d };
-    else { const st = subStyle(); g0 = { mode, s0: { x: st.x, y: st.y, size: st.size }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
+    else { const st = subApi.cur(); g0 = { mode, s0: { x: st.x, y: st.y, size: st.size }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
   });
   canvas.addEventListener("pointermove", (e) => {
     if (!ptrs.has(e.pointerId) || !g0) return;
@@ -566,7 +628,7 @@ export async function openEditor(P, onExit) {
       if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
       const st = subApi.st();
       if (k) st.size = clamp(g0.s0.size * k, 0.025, 0.2);
-      else { const x = clamp(g0.s0.x + dx, 0.05, 0.95); st.x = Math.abs(x - 0.5) < 0.02 ? 0.5 : x; st.y = clamp(g0.s0.y + dy, 0.05, 0.95); }
+      else if (subApi.scope() !== "word") { const x = clamp(g0.s0.x + dx, 0.05, 0.95); st.x = Math.abs(x - 0.5) < 0.02 ? 0.5 : x; st.y = clamp(g0.s0.y + dy, 0.05, 0.95); }
     }
     draw();
   });
@@ -598,5 +660,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, get lines() { return lines; }, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }

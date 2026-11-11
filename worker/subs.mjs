@@ -12,7 +12,7 @@ const W = +Ws, H = +Hs, N = +Ns, [fn, fd] = fpsS.split("/").map(Number), fps = f
 const { style, lines, fonts } = JSON.parse(fs.readFileSync(proj, "utf8")).subs;
 for (const f of fonts || []) if (f.file && fs.existsSync(f.file)) GlobalFonts.registerFromPath(f.file, f.name);   // свой шрифт владельца из MEGA
 for (const [name, file] of Object.entries(FONTS)) GlobalFonts.registerFromPath(fileURLToPath(new URL("../app/fonts/" + file, import.meta.url)), name);
-const b = band(W, H, style);
+const b = band(W, H, style, lines);
 const cv = createCanvas(W, b.h), ctx = cv.getContext("2d");
 const ff = spawn("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${W}x${b.h}`, "-r", fpsS, "-i", "-", "-c:v", "qtrle", "-pix_fmt", "argb", out], { stdio: ["pipe", "inherit", "inherit"] });
 const done = new Promise((res, rej) => ff.on("close", (c) => c ? rej(new Error("ffmpeg " + c)) : res()));

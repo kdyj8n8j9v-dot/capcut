@@ -12,13 +12,15 @@ const r3 = (x) => Math.round(x * 1000) / 1000;
 export function buildJob(P, out, req) {
   const used = [...new Set(P.clips.map((c) => c.media))];
   const style = normStyle(P.subs?.style), lines = P.subs?.on ? buildLines(P.clips, P.words || {}, style) : [];
-  const pf = FONTS[style.font] ? null : packFont(style.font);   // свой шрифт: сборщик возьмёт тот же файл из MEGA
+  // свои шрифты (общий, отдельных строк и слов): сборщик возьмёт те же файлы из MEGA
+  const names = new Set([style.font, ...lines.flatMap((l) => [l.style?.font, ...l.words.map((w) => w.style?.font)])].filter((n) => n && !FONTS[n]));
+  const pf = [...names].map(packFont).filter(Boolean).map((f) => ({ name: f.name, path: f.path + "/" + f.file }));
   return {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
     timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1 },
-    ...(lines.length ? { subs: { style, ...(pf ? { fonts: [{ name: pf.name, path: pf.path + "/" + pf.file }] } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}) })) })) } } : {}),
+    ...(lines.length ? { subs: { style, ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
   };
 }
 const STEPS = [["send", "Отправляю проект"], ["queued", "Жду свободный сборщик"], ["setup", "Сборщик готовится"], ["work", "Собираю видео в 4K"], ["done", "Готово"]];
