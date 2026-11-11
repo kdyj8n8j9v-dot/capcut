@@ -18,15 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ffmpeg, MEGAcmd, python
+        timeout-minutes: 15
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          # каждая установка — с ограничением по времени и повтором: зависшая загрузка не должна держать задание часами
+          retry() { local t=$1; shift; for i in 1 2 3; do timeout "$t" "$@" && return 0; echo "не вышло, повтор $i: $1 $2"; sleep 5; done; return 1; }
+          retry 180 sudo apt-get update -qq
+          retry 300 sudo apt-get install -y -qq ffmpeg >/dev/null
           # 10 бит 4:2:2 должен кодироваться — иначе не тратим время
           ffmpeg -v error -f lavfi -i testsrc=s=64x64:d=0.1 -pix_fmt yuv422p10le -c:v libx265 -profile:v main422-10 -f null -
           . /etc/os-release
-          curl -sSfL -o /tmp/mega.deb "https://mega.nz/linux/repo/xUbuntu_${VERSION_ID}/amd64/megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
-          sudo apt-get install -y -qq /tmp/mega.deb >/dev/null
-          pip install -q numpy opencv-python-headless faster-whisper
-          npm install --no-save --silent @napi-rs/canvas   # субтитры рисует тот же код, что и превью в приложении
+          retry 150 curl -sSfL --connect-timeout 20 -o /tmp/mega.deb "https://mega.nz/linux/repo/xUbuntu_${VERSION_ID}/amd64/megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
+          retry 300 sudo apt-get install -y -qq /tmp/mega.deb >/dev/null
+          retry 300 pip install -q numpy opencv-python-headless faster-whisper
+          retry 180 npm install --no-save --silent @napi-rs/canvas   # субтитры рисует тот же код, что и превью в приложении
       - uses: actions/cache@v4
         with: { path: ~/.cache/huggingface, key: whisper-large-v3-turbo }
       - name: run
