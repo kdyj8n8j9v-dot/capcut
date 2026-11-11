@@ -2,7 +2,7 @@
 // и готовое видео на сборщике (worker/subs.mjs) — поэтому превью совпадает с итогом. Здесь нет ничего от браузера.
 export const FONTS = { Montserrat: "Montserrat_800ExtraBold.ttf", Inter: "Inter_800ExtraBold.ttf", Rubik: "Rubik_800ExtraBold.ttf", Oswald: "Oswald_600SemiBold.ttf", Caveat: "Caveat_700Bold.ttf" };
 export const SUB_DEFAULT = {
-  font: "Montserrat", size: 0.07, x: 0.5, y: 0.72, rot: 0, align: "center", ls: 0, lh: 1.25, italic: false, case: "none", punct: true, maxChars: 16, shift: 0,
+  font: "Montserrat", size: 0.07, x: 0.5, y: 0.72, rot: 0, align: "center", ls: 0, ws: 0, lh: 1.25, sx: 1, sy: 1, wrap: 0.9, italic: false, case: "none", punct: true, maxChars: 16, shift: 0,
   color: "#ffffff", color2: "", opacity: 1,
   stroke: 0.14, strokeColor: "#000000",
   shadow: 0, shadowColor: "#000000", shadowBlur: 0.4,
@@ -89,7 +89,7 @@ export function buildLines(clips, words, style) {
 export function band(W, H, style) {
   const st = normStyle(style);
   if (st.rot) return { y: 0, h: H };
-  const px = st.size * W, half = px * st.lh * 2.2 + px * 3;
+  const px = st.size * W, half = (px * st.lh * 2.2 + px * 3) * Math.max(1, st.sy);
   const y = Math.floor(clamp(st.y * H - half, 0, H) / 2) * 2, y2 = Math.ceil(clamp(st.y * H + half, 0, H) / 2) * 2;
   return { y, h: Math.max(2, y2 - y) };
 }
@@ -104,7 +104,7 @@ export function drawSubs(ctx, W, H, t, lines, style) {
   const st = normStyle(style);
   const li = lines.findIndex((l) => t >= l.start && t < l.end);
   if (li < 0) return false;
-  const line = lines[li], px = st.size * W, lh = px * st.lh, maxW = W * 0.9, sp = px * 0.32 + st.ls * px, ls = st.ls * px;
+  const line = lines[li], px = st.size * W, lh = px * st.lh, maxW = W * st.wrap / st.sx, sp = Math.max(0, px * 0.32 + (st.ls + st.ws) * px), ls = st.ls * px;
   const perChar = st.in === "letters" || st.in === "type" || st.loop === "wave" || ls !== 0;
   ctx.save();
   ctx.font = `${px}px "${st.font}", sans-serif`; ctx.textBaseline = "alphabetic"; ctx.textAlign = "left"; ctx.lineJoin = "round"; ctx.lineCap = "round";
@@ -157,7 +157,7 @@ export function drawSubs(ctx, W, H, t, lines, style) {
   else if (st.loop === "swing") F.r += 0.05 * Math.sin(tau * 4);
   else if (st.loop === "float") F.dy += px * 0.1 * Math.sin(tau * 3);
   if (F.a <= 0.001) { ctx.restore(); return true; }
-  ctx.translate(X + F.dx, cy + F.dy); ctx.rotate(F.r); ctx.scale(F.sx, F.sy); ctx.translate(-X, -cy);
+  ctx.translate(X + F.dx, cy + F.dy); ctx.rotate(F.r); ctx.scale(F.sx * st.sx, F.sy * st.sy); ctx.translate(-X, -cy);   // sx, sy — ширина и высота букв
   ctx.globalAlpha = clamp(F.a, 0, 1);
   if (F.clip) {
     const m = px * 0.6, bx = left - m, by = top - m, bw = blockW + 2 * m, bh = blockH + 2 * m;

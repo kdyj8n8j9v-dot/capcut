@@ -155,6 +155,10 @@ async function run(label, viewport, scale) {
   await page.waitForFunction(() => window.__ed.P.subs.style.font === "Мой шрифт");
   ok(await page.evaluate(() => document.fonts.check('20px "Мой шрифт"')), "свой шрифт из MEGA «Для монтажа ПАК» скачан и подключён");
   ok(await page.locator(".fonts >> text=Второй").count() === 1, "шрифты находятся и во вложенных папках");
+  await page.locator('input[aria-label="Высота букв"]').fill("2"); await page.locator('input[aria-label="Ширина букв"]').fill("0.7");
+  await page.locator('input[aria-label="Между словами"]').fill("0.4"); await page.locator('input[aria-label="Между строками"]').fill("1.6");
+  ok(await ed(() => { const s = window.__ed.P.subs.style; return s.sy === 2 && s.sx === 0.7 && s.ws === 0.4 && s.lh === 1.6; }), "высота и ширина букв, расстояния между словами и строками настраиваются");
+  await ed(() => window.__ed.seek(window.__ed.lines[0].words[0].start + 0.5)); await page.waitForTimeout(300);
   await shot("7c-font");
   // цвет: палитра
   await page.click(".panel .tabs >> text=Цвет");
