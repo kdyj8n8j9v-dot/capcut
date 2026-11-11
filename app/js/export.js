@@ -4,16 +4,19 @@ import { db, uid } from "./store.js";
 import { cloud, PATHS } from "./cloud.js";
 import { github, waitRun } from "./github.js";
 import { isUploaded, busyOf } from "./media.js";
+import { buildLines, SUB_DEFAULT } from "./subs.mjs";
 
 const safe = (n) => (n || "Ролик").replace(/[\/\\:*?"<>|]/g, "-").trim() || "Ролик";
 const r3 = (x) => Math.round(x * 1000) / 1000;
 export function buildJob(P, out, req) {
   const used = [...new Set(P.clips.map((c) => c.media))];
+  const style = { ...SUB_DEFAULT, ...(P.subs?.style || {}) }, lines = P.subs?.on ? buildLines(P.clips, P.words || {}, style) : [];
   return {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
     timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1 },
+    ...(lines.length ? { subs: { style, lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end) })) })) } } : {}),
   };
 }
 const STEPS = [["send", "Отправляю проект"], ["queued", "Жду свободный сборщик"], ["setup", "Сборщик готовится"], ["work", "Собираю видео в 4K"], ["done", "Готово"]];

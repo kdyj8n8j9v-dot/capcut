@@ -3,3 +3,4 @@ originals/
 __pycache__/
 tests/sample.webm
 tests/shots/
+node_modules

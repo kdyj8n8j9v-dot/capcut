@@ -8,7 +8,7 @@
     files["Исходники/Съёмка 1.mov"] = new Blob([new Uint8Array(3e6)]);
     files["Исходники/Съёмка 2.mov"] = new Blob([new Uint8Array(5e6)]);
     files["10 бит/.studio/Съёмка 1.proxy.mp4"] = b;
-    files["10 бит/.studio/Съёмка 1.transcript.json"] = new Blob(['{"words":[]}']);
+    files["10 бит/.studio/Съёмка 1.transcript.json"] = new Blob([JSON.stringify({ words: "Привет, это проверка субтитров. Каждое слово стоит на своём месте, и текст можно править!".split(" ").map((x, i) => ({ text: x, start: 0.3 + i * 0.5, end: 0.3 + i * 0.5 + 0.4 })) })]);
   })();
   const s = { get: (k) => JSON.parse(localStorage.getItem("studio." + k)), set: (k, v) => localStorage.setItem("studio." + k, JSON.stringify(v)) };
   window.__fakeLog = log; window.__fakeFiles = files;

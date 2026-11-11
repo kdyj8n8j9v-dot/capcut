@@ -24,7 +24,7 @@ const P = {
   device: "M8 3h8a2 2 0 012 2v14a2 2 0 01-2 2H8a2 2 0 01-2-2V5a2 2 0 012-2zM11 18h2", check: "M5 12.5l4.5 4.5L19 7.5",
   close: "M6 6l12 12M18 6L6 18", film: "M4 5h16v14H4zM8 5v14M16 5v14M4 9.7h4M4 14.3h4M16 9.7h4M16 14.3h4", more: "M6 12h.01M12 12h.01M18 12h.01",
   zoomin: "M11 4a7 7 0 100 14 7 7 0 000-14zM20 20l-4-4M11 8v6M8 11h6", zoomout: "M11 4a7 7 0 100 14 7 7 0 000-14zM20 20l-4-4M8 11h6",
-  sound: "M4 10v4h3l5 4V6l-5 4zM16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11", down: "M12 4v12M7 11l5 5 5-5M5 20h14",
+  sound: "M4 10v4h3l5 4V6l-5 4zM16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11", text: "M4 6h16v11H9l-4 3v-3H4zM8 10.5h8M8 13.5h5", down: "M12 4v12M7 11l5 5 5-5M5 20h14",
 };
 export function icon(name, size = 24) {
   const fill = name === "play" || name === "pause";

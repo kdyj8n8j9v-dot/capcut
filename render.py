@@ -209,15 +209,28 @@ def render(project, out, draft=False):
     wav, cube = work / "audio.wav", work / "grade.cube"
     build_audio(project, wav)
     G.write_cube(G.settings(project.get("grade")), cube)
+    total = sum(round((s["out"] - s["in"]) * fps) for s in segs)
+    vf = f"lut3d=file='{cube}':interp=tetrahedral,scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
+    sub_in, vmap = [], ["-map", "0:v", "-vf", vf]
+    if (project.get("subs") or {}).get("lines"):
+        # subtitles: the app's own drawing code renders a transparent strip (worker/subs.mjs); it is laid over the graded
+        # picture already in 10-bit 4:2:2, so the grade never touches the text and the video stays 10-bit
+        sub = work / "subs.mov"
+        pj = work / "subs.json"
+        pj.write_text(json.dumps({"subs": project["subs"]}, ensure_ascii=False))
+        r = subprocess.run(["node", str(ROOT / "worker" / "subs.mjs"), str(pj), str(sub), f"{fps.numerator}/{fps.denominator}",
+                            str(out_w), str(out_h), str(total)], capture_output=True, text=True, check=True)
+        band = json.loads(r.stdout.strip().splitlines()[-1])
+        sub_in = ["-i", str(sub)]
+        vmap = ["-filter_complex", f"[0:v]{vf}[v];[2:v]scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuva422p10le[s];"
+                                   f"[v][s]overlay=0:{band['y']}:format=yuv422p10:eof_action=pass[o]", "-map", "[o]"]
     enc = ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb48le", "-s", f"{out_w}x{out_h}",
-           "-r", str(fps), "-i", "-", "-i", str(wav), "-map", "0:v", "-map", "1:a",
-           "-vf", f"lut3d=file='{cube}':interp=tetrahedral,scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le",
+           "-r", str(fps), "-i", "-", "-i", str(wav), *sub_in, *vmap, "-map", "1:a",
            "-c:v", "libx265", "-profile:v", "main422-10", "-preset", "ultrafast" if draft else "medium",
            "-crf", "24" if draft else "12", "-x265-params", "log-level=error",
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
            "-tag:v", "hvc1", "-c:a", "aac", "-b:a", "320k", "-movflags", "+faststart", str(out)]
     p = subprocess.Popen(enc, stdin=subprocess.PIPE)
-    total = sum(round((s["out"] - s["in"]) * fps) for s in segs)
     done, t_start = 0, time.time()
     prog = work / "progress.json"
     with ThreadPoolExecutor(3) as pool:

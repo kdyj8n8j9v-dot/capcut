@@ -144,3 +144,14 @@ export async function isUploaded(key) {
   return !!rec && list.some((f) => f.name === rec.name);
 }
 export const wordsOf = async (key) => { try { return JSON.parse(await db.get("blobs", key + ".words")); } catch { return null; } };
+
+// Слова речи файла: с устройства, иначе из MEGA, иначе просим сборщик распознать (около 4 минут).
+export async function ensureWords(key, name) {
+  let w = await wordsOf(key);
+  if (w && w.words) return w.words;
+  const file = stem(name) + ".transcript.json";
+  const pull = async () => { const t = await cloud.getText(PATHS.studio, file); await db.put("blobs", t, key + ".words"); return JSON.parse(t).words || []; };
+  try { return await pull(); } catch {}
+  if (busy.has(key)) throw new Error("Файл ещё обрабатывается. Попробуйте, когда загрузка закончится.");
+  try { setBusy(key, "Распознаю речь"); await prepare({ key, name }); return await pull(); } finally { setBusy(key, null); }
+}

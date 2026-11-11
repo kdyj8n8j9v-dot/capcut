@@ -118,6 +118,29 @@ async function run(label, viewport, scale) {
   await shot("9-fit");
   await page.click(".panel-head >> text=Готово");
 
+  // субтитры
+  await page.click('[data-tool=subs]');
+  await page.click("text=Создать субтитры");
+  await page.waitForFunction(() => window.__ed.lines.length > 0);
+  const nl = await ed(() => window.__ed.lines.length);
+  ok(nl >= 2 && await page.locator(".sub").count() === nl, `авто-субтитры: ${nl} строк, на дорожке столько же`);
+  const inked = () => page.evaluate(() => { const c = document.querySelector("canvas.over"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++; return n; });
+  await ed(() => window.__ed.seek(window.__ed.lines[0].words[0].start + 0.2)); await page.waitForTimeout(400);
+  ok(await inked() > 300, "субтитры видны на превью");
+  await shot("7a-subs");
+  await page.click(".presets >> text=Плашка"); await page.waitForTimeout(300);
+  ok(await ed(() => window.__ed.P.subs.style.box) === true, "стиль субтитров меняется одним нажатием");
+  await page.click(".panel .seg >> text=Текст");
+  await page.locator(".item.line").first().click();
+  await page.fill(".sheet input", "Новый текст строки"); await page.click(".sheet >> text=Готово");
+  await page.waitForTimeout(200);
+  ok((await ed(() => window.__ed.lines[0].raw)).startsWith("Новый текст"), "текст строки можно править");
+  await page.click('[aria-label="Отменить"]');
+  ok(!(await ed(() => window.__ed.lines[0].raw)).startsWith("Новый"), "правка текста отменяется");
+  await page.click(".panel .seg >> text=Настройка"); await page.waitForTimeout(200);
+  await shot("7b-subs-setup");
+  await page.click(".panel-head >> text=Готово");
+
   // воспроизведение через склейку
   await ed(() => window.__ed.seek(0));
   await page.click(".play"); await page.waitForTimeout(1500);
@@ -149,6 +172,7 @@ async function run(label, viewport, scale) {
   const job = await page.evaluate(async () => { const k = Object.keys(window.__fakeFiles).find((x) => x.includes("/jobs/")); return JSON.parse(await window.__fakeFiles[k].text()); });
   const d2 = await page.evaluate(() => window.__fakeLog.find((l) => l.startsWith("dispatch export")));
   ok(job.output.w === 2160 && job.output.h === 3840 && job.timeline.length === 2 && job.grade.exposure === 0.8 && Object.values(job.clips)[0].file.startsWith("#"), "проект для сборщика лёг в MEGA: 4K, клипы, цвет, имена хешем");
+  ok(job.subs && job.subs.lines.length >= 2 && job.subs.lines[0].words[0].text && job.subs.style.font, "субтитры ушли сборщику вместе с проектом");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');
 
@@ -163,6 +187,11 @@ async function run(label, viewport, scale) {
   ok(true, "после перезапуска проект и превью на месте");
   ok(errors.length === 0, "нет ошибок в консоли" + (errors.length ? ": " + errors.slice(0, 5).join(" | ") : ""));
   await ctx.close();
+}
+{
+  const page = await browser.newPage(); await page.goto(URL0);
+  ok(await page.evaluate(async () => typeof (await import("./vendor/mega.mjs")).Storage === "function"), "библиотека MEGA загружается в браузере");
+  await page.close();
 }
 await run("ipad", { width: 1180, height: 820 }, 2);
 await run("iphone", { width: 390, height: 844 }, 2);

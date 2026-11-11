@@ -2,7 +2,8 @@
 import { h, icon, sheet, toast, askText, fmtTime, clamp } from "./ui.js";
 import { db, uid } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
-import { mediaUrl, library, ensure, onMedia, busyOf } from "./media.js";
+import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords } from "./media.js";
+import { buildLines, drawSubs, FONTS, SUB_DEFAULT, PRESETS } from "./subs.mjs";
 import { cloud } from "./cloud.js";
 import { openLibrary } from "./library.js";
 import { openExport } from "./export.js";
@@ -23,7 +24,7 @@ const GROUPS = [
 const BAND_COLORS = ["#ff453a", "#ff9f0a", "#ffd60a", "#30d158", "#40c8e0", "#0a84ff", "#bf5af2", "#ff375f"];
 
 export async function openEditor(P, onExit) {
-  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1;
+  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {};
   const root = document.getElementById("app");
   let t = 0, sel = null, pps = 40, playing = false, pi = 0, panel = null, alive = true, lastTick = 0;
   const undo = [], redo = [];
@@ -46,7 +47,7 @@ export async function openEditor(P, onExit) {
   let shown = null;
 
   // ——— история и сохранение
-  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume });
+  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words });
   let saveT;
   function save() {
     clearTimeout(saveT);
@@ -62,17 +63,17 @@ export async function openEditor(P, onExit) {
   }
 
   // ——— экран
-  const canvas = h("canvas");
+  const canvas = h("canvas"), over = h("canvas.over");
   const R = createRenderer(canvas);
   const empty = h("div.empty", {},
     h("div.empty-title", {}, "Начните с видео"),
     h("div.muted", {}, "Возьмите его из MEGA или с этого устройства."),
     h("button.btn.primary.big", { onclick: addMedia }, icon("plus", 20), "Добавить видео"));
-  const view = h("div.view", {}, canvas, empty);
+  const view = h("div.view", {}, canvas, over, empty);
   const side = h("aside.panel", { hidden: true });
   const tNow = h("span.t-now", {}, "0:00,0"), tAll = h("span.t-all", {}, "0:00");
   const playBtn = h("button.round.play", { onclick: toggle, "aria-label": "Пуск" }, icon("play", 22));
-  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), inner = h("div.tl-inner", {}, ruler, track);
+  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), inner = h("div.tl-inner", {}, ruler, track, subRow);
   scroll.append(inner);
   const titleBtn = h("button.title", { onclick: rename }, P.name);
   const fmtBtn = h("button.chip", { onclick: pickFormat, "aria-label": "Формат" }, P.format);
@@ -82,7 +83,7 @@ export async function openEditor(P, onExit) {
   const tools = h("nav.tools", {},
     tool("media", "plus", "Медиа", addMedia), tool("split", "split", "Разрезать", split),
     tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("color", "color", "Цвет", () => openPanel("color")),
-    tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
+    tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
   const ed = h("div.ed", {},
     h("header.bar", {},
       h("button.link", { onclick: exit }, icon("back", 20), "Проекты"), titleBtn,
@@ -98,7 +99,7 @@ export async function openEditor(P, onExit) {
   function syncBar() {
     undoBtn.disabled = !undo.length; redoBtn.disabled = !redo.length;
     const none = !P.clips.length;
-    empty.hidden = !none; canvas.hidden = none;
+    empty.hidden = !none; canvas.hidden = over.hidden = none;
     for (const b of tools.children) {
       const id = b.dataset.tool;
       b.disabled = id !== "media" && none || id === "delete" && !sel;
@@ -118,6 +119,7 @@ export async function openEditor(P, onExit) {
     canvas.style.width = cw + "px"; canvas.style.height = ch + "px";
     const dpr = Math.min(2, devicePixelRatio || 1), q = Math.min(1, 1080 / (Math.min(cw, ch) * dpr));
     canvas.width = Math.max(2, Math.round(cw * dpr * q)); canvas.height = Math.max(2, Math.round(ch * dpr * q));
+    over.style.width = cw + "px"; over.style.height = ch + "px"; over.width = canvas.width; over.height = canvas.height;
     const pad = scroll.clientWidth / 2;
     inner.style.padding = `0 ${pad}px`;
     scroll.scrollLeft = t * pps;
@@ -166,6 +168,9 @@ export async function openEditor(P, onExit) {
     const loc = locate(t), rec = loc && vids.get(loc.clip.media);
     if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade);
     else R.draw(null);
+    const c2 = over.getContext("2d");
+    c2.clearRect(0, 0, over.width, over.height);
+    if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
   }
   function seek(time, fromScroll) {
     t = clamp(time, 0, total());
@@ -216,6 +221,50 @@ export async function openEditor(P, onExit) {
     tNow.textContent = fmtTime(t, true);
     draw();
     requestAnimationFrame(tick);
+  }
+
+  // ——— субтитры
+  let lines = [];
+  const subStyle = () => ({ ...SUB_DEFAULT, ...(P.subs?.style || {}) });
+  const fontsAsked = new Set();
+  function loadFont(name) {
+    if (fontsAsked.has(name) || !FONTS[name] || !window.FontFace) return;
+    fontsAsked.add(name);
+    new FontFace(name, `url(fonts/${FONTS[name]})`).load().then((f) => { document.fonts.add(f); draw(); }).catch(() => {});
+  }
+  function relines() {
+    lines = P.subs ? buildLines(P.clips, P.words, subStyle()) : [];
+    if (P.subs) loadFont(subStyle().font);
+    subRow.style.width = total() * pps + "px";
+    subRow.hidden = !lines.length;
+    subRow.classList.toggle("off", !P.subs?.on);
+    subRow.replaceChildren(...lines.map((l, i) => h("button.sub", { style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" }, onclick: (e) => { e.stopPropagation(); pause(); seek(l.start + 0.02); editLine(i); } }, l.words.map((w) => w.text).join(" "))));
+  }
+  async function editLine(i) {
+    const l = lines[i]; if (!l) return;
+    const txt = await askText("Текст субтитра", l.raw, "Пусто — убрать эту строку");
+    if (txt == null || txt === l.raw) return;
+    begin();
+    const src = P.words[l.key], a = src[l.i0].start, b = src[l.i1].end, parts = txt.split(/\s+/).filter(Boolean);
+    const neu = parts.length === l.i1 - l.i0 + 1 ? parts.map((x, k) => ({ ...src[l.i0 + k], text: x }))
+      : parts.map((x, k) => ({ text: x, start: a + (b - a) * k / parts.length, end: a + (b - a) * (k + 1) / parts.length }));
+    src.splice(l.i0, l.i1 - l.i0 + 1, ...neu);
+    relines(); draw(); renderPanel(); save();
+  }
+  let making = false;
+  async function makeSubs() {
+    if (making) return;
+    making = true; renderPanel();
+    try {
+      const got = {};
+      for (const k of new Set(P.clips.map((c) => c.media))) got[k] = await ensureWords(k, P.media[k].name);
+      if (!Object.values(got).some((w) => w.length)) throw new Error("В этих видео не нашлось речи.");
+      begin();
+      Object.assign(P.words, JSON.parse(JSON.stringify(got)));
+      P.subs = { on: true, style: { ...(P.subs?.style || PRESETS[1][1]) } };
+      relines(); draw(); save(); toast("Субтитры готовы. Нажмите на строку, чтобы поправить текст");
+    } catch (e) { toast(e.message, 6000); }
+    making = false; renderPanel();
   }
 
   // ——— миниатюры на дорожке
@@ -271,7 +320,7 @@ export async function openEditor(P, onExit) {
     const marks = [];
     for (let s = 0; s <= tot + 1e-6; s += step) marks.push(h("span", { style: { left: s * pps + "px" } }, step < 1 ? fmtTime(s, true) : fmtTime(s)));
     ruler.replaceChildren(...marks); ruler.style.width = tot * pps + "px";
-    layoutBusy(); syncBar();
+    relines(); layoutBusy(); syncBar();
   }
   function layoutBusy() {
     for (const el of track.querySelectorAll(".clip")) {
@@ -313,7 +362,7 @@ export async function openEditor(P, onExit) {
     for (const c of track.querySelectorAll(".clip")) c.classList.toggle("sel", c.dataset.id === sel);
     syncBar();
   });
-  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler) { sel = null; layout(); } });
+  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow) { sel = null; layout(); } });
   track.addEventListener("pointerdown", (e) => {
     const el = e.target.closest(".clip");
     if (!el || e.button > 0) return;
@@ -444,7 +493,7 @@ export async function openEditor(P, onExit) {
     const reset = () => { begin(); inp.value = def; set(def); val.textContent = show(def); draw(); save(); };
     return h("label.sl", {}, h("span.sl-top", {}, h("span", {}, label), h("button.sl-reset", { onclick: (e) => { e.preventDefault(); reset(); }, title: "Сбросить" }, val)), inp);
   }
-  let colorTab = 0, band = 0;
+  let colorTab = 0, band = 0, subTab = 0;
   function renderPanel() {
     side.hidden = !panel;
     ed.classList.toggle("with-panel", !!panel);
@@ -477,6 +526,38 @@ export async function openEditor(P, onExit) {
       side.replaceChildren(head("Цвет", () => { begin(); P.grade = {}; renderPanel(); draw(); save(); }),
         h("div.seg.scroll", {}, tabs.map((n, i) => h("button" + (i === colorTab ? ".on" : ""), { onclick: () => { colorTab = i; renderPanel(); } }, n))),
         h("div.sliders", {}, body), h("p.hint", {}, "Цвет применяется ко всему ролику. Нажмите на число, чтобы вернуть ноль."));
+    } else if (panel === "subs") {
+      if (!P.subs) {
+        return side.replaceChildren(head("Субтитры"),
+          h("p.muted", {}, "Приложение само расставит слова по времени речи. Потом текст можно поправить, а вид — выбрать из готовых стилей."),
+          h("button.btn.primary.wide.big", { onclick: makeSubs, disabled: making }, making ? "Готовлю… это может занять до 4 минут" : "Создать субтитры"));
+      }
+      const st = () => (P.subs.style ||= {}), cur = subStyle();
+      const ch = (fn) => { begin(); fn(); relines(); draw(); renderPanel(); save(); };
+      const sl = (label, key, min, max, showFn) => slider(label, () => subStyle()[key], (v) => { st()[key] = v; relines(); }, { min, max, def: SUB_DEFAULT[key], show: showFn });
+      const swatches = (key, cols) => h("div.bands", {}, cols.map((col) => h("button" + (cur[key] === col ? ".on" : ""), { style: { background: col }, "aria-label": col, onclick: () => ch(() => st()[key] = col) })));
+      const COLS = ["#ffffff", "#ffd60a", "#30d158", "#0a84ff", "#ff375f", "#ff9f0a", "#bf5af2", "#000000"];
+      const tabs = ["Стиль", "Текст", "Настройка"];
+      let body;
+      if (subTab === 0) body = h("div.presets", {}, PRESETS.map(([name, v]) => h("button" + (Object.keys(v).every((k) => cur[k] === v[k]) ? ".on" : ""), { onclick: () => { loadFont(v.font); ch(() => Object.assign(st(), v)); } },
+        h("span", { style: { fontFamily: `"${v.font}", sans-serif`, color: v.box ? "#fff" : v.active, background: v.box ? v.active : "none", textTransform: v.upper ? "uppercase" : "none" } }, name))));
+      else if (subTab === 1) body = h("div.list", {}, lines.length ? lines.map((l, i) => h("button.item.line", { onclick: () => { seek(l.start + 0.02); editLine(i); } },
+        h("small", {}, fmtTime(l.start, true)), h("span.item-main", {}, l.words.map((w) => w.text).join(" ")))) : h("p.muted", {}, "В ролике нет распознанной речи."));
+      else body = [
+        h("div.seg.scroll", {}, Object.keys(FONTS).map((f) => h("button" + (cur.font === f ? ".on" : ""), { style: { fontFamily: `"${f}"` }, onclick: () => { loadFont(f); ch(() => st().font = f); } }, f))),
+        h("div.seg.scroll", {}, [["none", "Без движения"], ["highlight", "Подсветка"], ["pop", "Прыжок"], ["reveal", "По слову"]].map(([k, n]) => h("button" + (cur.anim === k ? ".on" : ""), { onclick: () => ch(() => st().anim = k) }, n))),
+        sl("Размер", "size", 0.03, 0.14, (v) => Math.round(v * 1000)), sl("Высота на экране", "y", 0.08, 0.92, (v) => Math.round((1 - v) * 100)),
+        sl("Букв в строке", "maxChars", 1, 40, (v) => Math.round(v)), sl("Обводка", "stroke", 0, 0.3, (v) => Math.round(v * 100)),
+        h("div.sl-top", {}, "Цвет текста"), swatches("color", COLS), h("div.sl-top", {}, "Цвет слова, которое звучит"), swatches("active", COLS),
+        h("div.seg", {}, h("button" + (cur.upper ? ".on" : ""), { onclick: () => ch(() => st().upper = !cur.upper) }, "ЗАГЛАВНЫЕ"),
+          h("button" + (cur.punct ? ".on" : ""), { onclick: () => ch(() => st().punct = !cur.punct) }, "Знаки . , !"),
+          h("button" + (cur.box ? ".on" : ""), { onclick: () => ch(() => st().box = !cur.box) }, "Плашка")),
+        h("button.btn.wide", { onclick: makeSubs, disabled: making }, "Распознать речь заново")];
+      [...new Set(PRESETS.map((x) => x[1].font))].forEach(loadFont);
+      side.replaceChildren(head("Субтитры"),
+        h("div.seg.scroll", {}, tabs.map((n, i) => h("button" + (i === subTab ? ".on" : ""), { onclick: () => { subTab = i; renderPanel(); } }, n))),
+        h("div.sliders", {}, body),
+        h("button.btn.wide", { onclick: () => ch(() => P.subs.on = !P.subs.on) }, P.subs.on ? "Скрыть субтитры" : "Показать субтитры"));
     } else if (panel === "sound") {
       side.replaceChildren(head("Звук"),
         slider("Громкость", () => P.volume, (v) => { P.volume = v; setVolume(); }, { min: 0, max: 2, def: 1, show: (v) => Math.round(v * 100) + " %" }),
@@ -523,5 +604,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, get lines() { return lines; }, get t() { return t; }, get playing() { return playing; }, total };
 }
