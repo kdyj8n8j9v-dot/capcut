@@ -195,7 +195,7 @@ input.cp-hue::-moz-range-track { height: 14px; border-radius: 7px; background: l
 /* iPad и широкие экраны: панель справа от превью */
 @media (min-width: 820px) {
   .stage { flex-direction: row; }
-  .panel { width: 380px; height: auto; margin: 0 12px 0 0; border-radius: 18px; padding-top: 6px; }
+  .panel { width: 380px; height: auto; margin: 0 12px 0 0; border-radius: 18px; padding-top: 0; } .panel-head { padding-top: 8px; } .tabs { top: 52px; }
   .tool { font-size: 12px; } .tl { height: 130px; } .tl-track { height: 68px; } .clip, .tl-add { height: 64px; }
   .title { font-size: 18px; }
 }
