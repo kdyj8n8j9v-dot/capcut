@@ -5,8 +5,7 @@ on:
     inputs:
       job:     { description: "prepare | export", required: true, default: prepare }
       file:    { description: "prepare: имя оригинала в MEGA IN", required: false, default: "" }
-      project: { description: "export: проект JSON → gzip → base64", required: false, default: "" }
-      req:     { description: "id запроса (приложение находит по нему свой запуск)", required: false, default: "" }
+      req:     { description: "номер задания: приложение находит по нему свой запуск; export — проект в MEGA «10 бит/.studio/jobs/<номер>.json»; selftest — проверка сборки", required: false, default: "" }
 run-name: "${{ inputs.job }} ${{ inputs.req }}"
 concurrency: { group: "studio-${{ inputs.job }}-${{ inputs.file }}${{ inputs.req }}", cancel-in-progress: false }
 jobs:
@@ -26,16 +25,15 @@ jobs:
           . /etc/os-release
           curl -sSfL -o /tmp/mega.deb "https://mega.nz/linux/repo/xUbuntu_${VERSION_ID}/amd64/megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
           sudo apt-get install -y -qq /tmp/mega.deb >/dev/null
-          pip install -q numpy faster-whisper
+          pip install -q numpy opencv-python-headless faster-whisper
       - uses: actions/cache@v4
         with: { path: ~/.cache/huggingface, key: whisper-large-v3-turbo }
       - name: run
-        env: { JOB: "${{ inputs.job }}", FILE: "${{ inputs.file }}", PROJECT: "${{ inputs.project }}" }
+        env: { JOB: "${{ inputs.job }}", FILE: "${{ inputs.file }}", REQ: "${{ inputs.req }}" }
         run: |
           [ -z "$FILE" ] || echo "::add-mask::$FILE"
           if [ "$JOB" = export ]; then
-            mkdir -p work && printf %s "$PROJECT" | base64 -d | gunzip > work/project.json
-            bash worker/run.sh export work/project.json
+            bash worker/run.sh export "$REQ"
           else
             bash worker/run.sh prepare "$FILE"
           fi

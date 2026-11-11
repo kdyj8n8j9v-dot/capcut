@@ -1,0 +1,172 @@
+// Автопроверка приложения в Chromium: настройки → медиа → монтаж → кадр и цвет → экспорт. Запуск: bash tests/run.sh
+import { createRequire } from "module";
+const { chromium } = createRequire(import.meta.url)("playwright");
+import fs from "fs";
+const shots = process.env.SHOTS || "tests/shots";
+fs.mkdirSync(shots, { recursive: true });
+const fake = fs.readFileSync(new URL("./fake.js", import.meta.url), "utf8");
+const URL0 = "http://127.0.0.1:8765/app/";
+let failed = 0;
+const ok = (c, name) => { console.log((c ? "  ✓ " : "  ✗ ") + name); if (!c) failed++; };
+const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
+
+async function run(label, viewport, scale) {
+  console.log(label);
+  const ctx = await browser.newContext({ viewport, deviceScaleFactor: scale, hasTouch: true, locale: "ru-RU" });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  await page.addInitScript(fake);
+  await page.goto(URL0);
+  const shot = async (n) => (await page.waitForTimeout(350), page.screenshot({ path: `${shots}/${label}-${n}.png` }));
+  const ed = (f) => page.evaluate(f);
+  await page.waitForSelector(".home");
+  ok(await page.locator(".setup").isVisible(), "главный экран зовёт подключить MEGA и GitHub");
+  await shot("1-home");
+
+  // настройки
+  await page.click(".setup");
+  await page.fill('input[type=email]', "me@example.com"); await page.fill('input[placeholder="Пароль MEGA"]', "не тот");
+  await page.click("text=Войти");
+  await page.waitForSelector(".error:visible");
+  ok((await page.locator(".error:visible").first().textContent()).includes("Неверная"), "неверный пароль MEGA — понятная ошибка");
+  await shot("2-settings");
+  await page.fill('input[placeholder="Пароль MEGA"]', "верный"); await page.click("text=Войти");
+  await page.waitForSelector("text=Вход выполнен");
+  ok(!JSON.stringify(await page.evaluate(() => localStorage.getItem("studio.mega"))).includes("верный"), "пароль MEGA не сохраняется");
+  await page.click("summary");
+  await page.fill('input[placeholder^="Токен"]', "bad"); await page.click("text=Сохранить и проверить");
+  await page.waitForSelector(".error:visible");
+  ok(await page.evaluate(() => localStorage.getItem("studio.gh")) === null, "неверный токен не сохраняется");
+  await page.fill('input[placeholder^="Токен"]', "github_pat_ok"); await page.click("text=Сохранить и проверить");
+  await page.waitForSelector("text=Токен сохранён");
+  await shot("3-settings-ok");
+  await page.click('.sheet [aria-label="Закрыть"]');
+  await page.waitForTimeout(300);
+  ok(!(await page.locator(".setup").count()), "после подключения подсказка исчезла");
+
+  // новый проект и медиа
+  await page.click(".card.new");
+  await page.waitForSelector(".empty");
+  await shot("4-empty");
+  await page.click(".empty .btn");
+  await page.waitForSelector(".lib .item >> text=Съёмка 1.mov");
+  await shot("5-library");
+  await page.click(".lib .item >> text=Съёмка 2.mov");            // нет копии → подготовка сборщиком
+  await page.click(".lib .item >> text=Съёмка 1.mov");            // копия в MEGA → скачать
+  await page.waitForSelector(".lib .badge.on");
+  await page.click(".lib-foot .btn");
+  await page.waitForSelector(".clip");
+  await page.waitForFunction(() => window.__ed && Math.abs(window.__ed.total() - 8) < 0.2);
+  ok(true, "видео из MEGA добавлено на дорожку (8 с)");
+  await page.waitForFunction(() => document.querySelector(".clip canvas").getContext("2d").getImageData(30, 30, 1, 1).data[3] > 0, null, { timeout: 20000 });
+  ok(true, "на дорожке есть миниатюры");
+  const px = () => page.evaluate(() => { const c = document.querySelector(".view canvas"), g = c.getContext("webgl"), b = new Uint8Array(4); g.readPixels(c.width >> 1, c.height >> 1, 1, 1, g.RGBA, g.UNSIGNED_BYTE, b); return [...b]; });
+  await page.waitForFunction(() => { const c = document.querySelector(".view canvas"), g = c.getContext("webgl"), b = new Uint8Array(4); g.readPixels(c.width >> 1, c.height >> 1, 1, 1, g.RGBA, g.UNSIGNED_BYTE, b); return b[0] + b[1] + b[2] > 30; });
+  ok(true, "превью показывает кадр");
+
+  // резка, удаление, отмена
+  await ed(() => window.__ed.seek(3));
+  await page.click('[data-tool=split]');
+  ok(await page.locator(".clip").count() === 2, "разрезать: два клипа");
+  await ed(() => window.__ed.seek(5.5)); await page.click('[data-tool=split]');
+  ok(await page.locator(".clip").count() === 3, "ещё разрез: три клипа");
+  await page.locator(".clip").nth(1).click();
+  await page.click('[data-tool=delete]');
+  ok(await page.locator(".clip").count() === 2 && Math.abs(await ed(() => window.__ed.total()) - 5.5) < 0.05, "удалить середину: 5,5 с");
+  await page.click('[aria-label="Отменить"]');
+  ok(await page.locator(".clip").count() === 3, "отменить: снова три клипа");
+  await page.click('[aria-label="Вернуть"]');
+  ok(await page.locator(".clip").count() === 2, "вернуть: два клипа");
+
+  // обрезка края
+  await page.evaluate(() => document.querySelector(".tl-scroll").scrollTo(0, 0));
+  await page.locator(".clip").nth(0).click();
+  const g = await page.locator(".clip.sel .grip.r").boundingBox();
+  await page.mouse.move(g.x + g.width / 2, g.y + 20); await page.mouse.down(); await page.mouse.move(g.x + g.width / 2 - 60, g.y + 20, { steps: 5 }); await page.mouse.up();
+  const first = await ed(() => window.__ed.P.clips[0].out - window.__ed.P.clips[0].in);
+  ok(first < 2.95 && first > 0.2, `обрезка правого края: клип стал ${first.toFixed(2)} с`);
+
+  // перестановка долгим нажатием
+  const ids = await ed(() => window.__ed.P.clips.map((c) => c.id));
+  const a = await page.locator(".clip").nth(0).boundingBox(), b = await page.locator(".clip").nth(1).boundingBox();
+  await page.mouse.move(a.x + a.width / 2, a.y + 20); await page.mouse.down(); await page.waitForTimeout(500);
+  await page.mouse.move(b.x + b.width - 5, a.y + 20, { steps: 8 }); await shot("6-reorder"); await page.mouse.up();
+  const ids2 = await ed(() => window.__ed.P.clips.map((c) => c.id));
+  ok(ids2[0] === ids[1] && ids2[1] === ids[0], "перестановка клипов долгим нажатием");
+
+  // кадр и цвет
+  await ed(() => window.__ed.seek(1));
+  await page.waitForTimeout(300);
+  const p0 = await px();
+  await page.click('[data-tool=color]');
+  await page.locator('input[aria-label="Экспозиция"]').fill("0.8");
+  await page.waitForTimeout(100);
+  const p1 = await px();
+  ok(p1[0] + p1[1] + p1[2] > p0[0] + p0[1] + p0[2] + 20, `цвет: экспозиция делает кадр светлее (${p0.slice(0, 3)} → ${p1.slice(0, 3)})`);
+  await shot("7-color");
+  await page.click(".panel .seg >> text=Оттенки"); await page.waitForSelector(".bands");
+  await page.click(".panel .seg >> text=Детали");
+  await page.locator('input[aria-label="Чёткость"]').fill("0.6"); await page.locator('input[aria-label="Резкость"]').fill("0.5");
+  await page.click('[data-tool=frame]');
+  await page.locator('input[aria-label="Размер"]').fill("1.6"); await page.locator('input[aria-label="Поворот"]').fill("12");
+  await page.waitForTimeout(100);
+  ok((await ed(() => window.__ed.P.clips[0].frame?.scale)) === 1.6, "кадр: размер и поворот записаны в клип");
+  await shot("8-frame");
+  await page.click("text=Показать целиком"); await page.waitForTimeout(100);
+  await shot("9-fit");
+  await page.click(".panel-head >> text=Готово");
+
+  // воспроизведение через склейку
+  await ed(() => window.__ed.seek(0));
+  await page.click(".play"); await page.waitForTimeout(1500);
+  const tp = await ed(() => window.__ed.t);
+  ok(tp > 0.8 && tp < 2.5, `воспроизведение идёт (за 1,5 с ушло на ${tp.toFixed(2)} с)`);
+  await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 15000 });
+  ok(Math.abs(await ed(() => window.__ed.t - window.__ed.total())) < 0.1, "доиграло до конца через склейки и остановилось");
+  await ed(() => window.__ed.seek(2)); await page.waitForTimeout(200);
+  await shot("10-editor");
+
+  // подготовка второго файла закончилась?
+  await page.click('[data-tool=media]');
+  await page.waitForSelector(".lib .item >> text=Съёмка 2.mov");
+  await page.waitForFunction(() => [...document.querySelectorAll(".lib .item")].some((i) => i.textContent.includes("Съёмка 2") && i.textContent.includes("на устройстве")), null, { timeout: 60000 });
+  ok(true, "файл без копии: сборщик подготовил, копия скачалась");
+  const disp = await page.evaluate(() => window.__fakeLog.find((l) => l.startsWith("dispatch prepare")));
+  ok(/"file":"#[0-9a-f]{16}"/.test(disp) && !disp.includes("Съёмка"), "сборщику ушёл хеш имени, а не имя");
+  await page.click('.sheet [aria-label="Закрыть"]');
+
+  // экспорт
+  await page.click(".bar .btn.primary");
+  await page.waitForSelector(".spec");
+  await shot("11-export");
+  await page.click("text=Собрать видео");
+  await page.waitForSelector(".step.now");
+  await shot("12-export-progress");
+  await page.waitForSelector("text=Сохранить на устройство", { timeout: 60000 });
+  await shot("13-export-done");
+  const job = await page.evaluate(async () => { const k = Object.keys(window.__fakeFiles).find((x) => x.includes("/jobs/")); return JSON.parse(await window.__fakeFiles[k].text()); });
+  const d2 = await page.evaluate(() => window.__fakeLog.find((l) => l.startsWith("dispatch export")));
+  ok(job.output.w === 2160 && job.output.h === 3840 && job.timeline.length === 2 && job.grade.exposure === 0.8 && Object.values(job.clips)[0].file.startsWith("#"), "проект для сборщика лёг в MEGA: 4K, клипы, цвет, имена хешем");
+  ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
+  await page.click('.sheet [aria-label="Закрыть"]');
+
+  // назад и снова открыть — проект сохранился
+  await page.click(".bar .link");
+  await page.waitForSelector(".card:not(.new)");
+  await shot("14-home-projects");
+  await page.reload(); await page.waitForSelector(".card:not(.new)");
+  await page.click(".card:not(.new)");
+  await page.waitForFunction(() => window.__ed && window.__ed.P.clips.length === 2);
+  await page.waitForFunction(() => { const c = document.querySelector(".view canvas"), g = c.getContext("webgl"), b = new Uint8Array(4); g.readPixels(c.width >> 1, c.height >> 1, 1, 1, g.RGBA, g.UNSIGNED_BYTE, b); return b[0] + b[1] + b[2] > 30; });
+  ok(true, "после перезапуска проект и превью на месте");
+  ok(errors.length === 0, "нет ошибок в консоли" + (errors.length ? ": " + errors.slice(0, 5).join(" | ") : ""));
+  await ctx.close();
+}
+await run("ipad", { width: 1180, height: 820 }, 2);
+await run("iphone", { width: 390, height: 844 }, 2);
+await run("ipad-portrait", { width: 820, height: 1180 }, 1);
+await browser.close();
+console.log(failed ? `НЕ ПРОШЛО: ${failed}` : "всё прошло");
+process.exit(failed ? 1 : 0);

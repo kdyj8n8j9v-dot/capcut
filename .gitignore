@@ -1,3 +1,5 @@
 work/
 originals/
 __pycache__/
+tests/sample.webm
+tests/shots/

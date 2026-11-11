@@ -9,4 +9,5 @@
 - Приложение — `app/` (публикуется на GitHub Pages через `.github/workflows/pages.yml`).
 - Исполнитель — `.github/workflows/studio-worker.yml`, `worker/run.sh` (prepare, export), MEGA — `scripts/cloud.sh`, `cloud.conf`.
 - Цвет и кадр — `grade.py`, сборка — `render.py` (копии из «Студии 10 бит»; редактор `10-bit` отсюда не менять).
+- Проверка приложения — `bash tests/run.sh` (Chromium + подставные MEGA/GitHub); перед выдачей смотреть скриншоты iPad и iPhone.
 - Владелец пишет по-русски, работает с iPad; интерфейс и документация на русском; ответы коротко.

@@ -63,6 +63,12 @@ def decode(path, t0, dur, w, h, fps=None):
     p.wait()
 
 
+def has_audio(path):
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True).stdout.strip()
+    return bool(out)
+
+
 def total_len(segs):
     return sum(s["out"] - s["in"] for s in segs)
 
@@ -147,11 +153,16 @@ def build_audio(project, out_wav):
     segs, inputs, parts = project["timeline"], [], []
     clips = project["clips"]
     vol = 1.0  # per segment: unity; volume, fades and the voice chain run once on the joined track (audio_chain)
+    fmt = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
     for i, s in enumerate(segs):
-        inputs += ["-i", str(clip_path(clips[s["clip"]]))]
+        path = clip_path(clips[s["clip"]])
+        inputs += ["-i", str(path)]
         d = s["out"] - s["in"]
-        parts.append(f"[{i}:a]atrim={s['in']:.6f}:{s['out']:.6f},asetpts=PTS-STARTPTS,"
-                     f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE},volume={vol:.4f}[a{i}]")
+        if has_audio(path):
+            parts.append(f"[{i}:a]atrim={s['in']:.6f}:{s['out']:.6f},asetpts=PTS-STARTPTS,{fmt},"
+                         f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE},volume={vol:.4f}[a{i}]")
+        else:  # take without sound (screen recording, drone): silence of the same length
+            parts.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{d:.6f},{fmt}[a{i}]")
     fc = ";".join(parts) + ";" + "".join(f"[a{i}]" for i in range(len(segs))) + f"concat=n={len(segs)}:v=0:a=1[a]"
     joined = Path(out_wav).with_suffix(".joined.wav")
     subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", fc, "-map", "[a]",

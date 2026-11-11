@@ -1,7 +1,7 @@
 #!/bin/bash
 # Облачный исполнитель «Студии» на GitHub Actions — работает без Claude.
 #   bash worker/run.sh prepare <файл в IN>     → прокси 1080p H.264 + субтитры (слова) → MEGA OUT/.studio/
-#   bash worker/run.sh export  <project.json>  → H.265 10 бит 4:2:2 из оригиналов → MEGA OUT
+#   bash worker/run.sh export  <номер задания>  → проект из MEGA OUT/.studio/jobs → H.265 10 бит 4:2:2 из оригиналов → MEGA OUT
 # MEGA_EMAIL / MEGA_PASSWORD — секреты репозитория (Settings → Secrets → Actions), не в git.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,8 +26,8 @@ for l in sys.stdin:
       exit 1
     fi
     echo "::add-mask::$arg"; echo "::add-mask::${arg%.*}"   # репозиторий публичный: имя ролика в журнале скрыто
-    bash scripts/cloud.sh pull "$arg"
-    src="originals/$arg"; [ -f "$src" ] || { echo "нет 10 бит 4:2:2 оригинала: $arg" >&2; exit 1; }
+    ANY_SOURCE=1 bash scripts/cloud.sh pull "$arg"
+    src="originals/$arg"; [ -f "$src" ] || { echo "файл не скачался или это не видео" >&2; exit 1; }
     stem="${arg%.*}"; mkdir -p work
     # прокси для монтажа на iPad: 1080 по короткой стороне, H.264 High, ключевой кадр каждые 0,5 с (точная перемотка)
     ffmpeg -v error -y -i "$src" -vf "scale='if(gt(iw,ih),-2,1080)':'if(gt(iw,ih),1080,-2)':flags=bicubic,format=yuv420p" \
@@ -39,10 +39,53 @@ for l in sys.stdin:
     mega_up "work/$stem.proxy.mp4" "$STUDIO"
     mega_up "work/$stem.transcript.json" "$STUDIO" ;;
   export)
-    files=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]));u={s["clip"] for s in p["timeline"]};print("\n".join(p["clips"][k]["file"] for k in u))' "$arg")
-    while IFS= read -r f; do bash scripts/cloud.sh pull "$f"; done <<< "$files"
-    name=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]));print((p.get("name") or p.get("id") or "edit").replace("/","-"))' "$arg")
-    python3 render.py "$arg" --out "work/$name-10bit.mov"
-    bash scripts/cloud.sh put "work/$name-10bit.mov" ;;
+    # $arg — номер задания: проект лежит в MEGA «$STUDIO/jobs/<номер>.json» (в GitHub не передаётся: репозиторий публичный).
+    # «selftest» — проверка сборки без приложения: 2 секунды первого файла из IN, итог никуда не загружается.
+    req="$arg"; mkdir -p work
+    bash scripts/cloud.sh status >/dev/null
+    if [ "$req" = selftest ]; then
+      first=$(bash scripts/cloud.sh list | python3 worker/find.py "*"); [ -n "$first" ] || { echo "в «$IN» нет видео" >&2; exit 1; }
+      echo "::add-mask::$first"; echo "::add-mask::${first%.*}"
+      python3 - "$first" > work/project.json <<'PY'
+import json, sys
+print(json.dumps({"id": "selftest", "name": "selftest", "output": {"w": 2160, "h": 3840}, "clips": {"a": {"file": sys.argv[1]}},
+                  "timeline": [{"clip": "a", "in": 1.0, "out": 2.0, "frame": {"scale": 1.2, "rot": 3}}, {"clip": "a", "in": 3.0, "out": 4.0}],
+                  "grade": {"exposure": 0.2, "contrast": 0.2, "clarity": 0.3, "vignette": -0.3, "saturation": 0.1}, "audio": {"volume": 1}}, ensure_ascii=False))
+PY
+    else
+      case "$req" in *[!A-Za-z0-9]*|"") echo "плохой номер задания" >&2; exit 2 ;; esac
+      mega-get "$STUDIO/jobs/$req.json" work/project.in.json >/dev/null
+      # имена файлов в проекте — «#хеш»: находим настоящие имена в IN
+      bash scripts/cloud.sh list > work/list.jsonl
+      python3 - work/project.in.json work/list.jsonl "$req" > work/project.json <<'PY'
+import json, subprocess, sys
+p = json.load(open(sys.argv[1])); lst = open(sys.argv[2]).read()
+for k, c in p["clips"].items():
+    name = subprocess.run([sys.executable, "worker/find.py", c["file"]], input=lst, capture_output=True, text=True).stdout.strip()
+    if not name:
+        sys.exit("в MEGA «Исходники» нет одного из оригиналов проекта")
+    c["file"] = name
+p["id"] = sys.argv[3]
+print(json.dumps(p, ensure_ascii=False))
+PY
+    fi
+    name=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]));print((p.get("name") or p.get("id") or "edit").replace("/","-"))' work/project.json)
+    echo "::add-mask::$name"
+    files=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]));u={s["clip"] for s in p["timeline"]};print("\n".join(p["clips"][k]["file"] for k in u))' work/project.json)
+    while IFS= read -r f; do echo "::add-mask::$f"; echo "::add-mask::${f%.*}"; ANY_SOURCE=1 bash scripts/cloud.sh pull "$f" </dev/null; [ -f "originals/$f" ] || { echo "оригинал не скачался" >&2; exit 1; }; done <<< "$files"
+    # ход сборки → MEGA (приложение показывает проценты)
+    if [ "$req" != selftest ]; then
+      ( while sleep 30; do
+          p="work/$req/progress.json"; [ -f "$p" ] || continue
+          cp "$p" "work/$req.progress.json"; mega-rm -f "$STUDIO/jobs/$req.progress.json" >/dev/null 2>&1 || true
+          mega-put "work/$req.progress.json" "$STUDIO/jobs/" >/dev/null 2>&1 || true
+        done ) & watcher=$!
+      trap 'kill $watcher 2>/dev/null || true' EXIT
+    fi
+    python3 render.py work/project.json --out "work/$name-10bit.mov"
+    if [ "$req" = selftest ]; then echo "  ✓ проверка сборки прошла: $(cat work/selftest/progress.json)"; exit 0; fi
+    kill $watcher 2>/dev/null || true
+    bash scripts/cloud.sh put "work/$name-10bit.mov"
+    mega-rm -f "$STUDIO/jobs/$req.json" "$STUDIO/jobs/$req.progress.json" >/dev/null 2>&1 || true ;;
   *) sed -n 2,6p "$0"; exit 2 ;;
 esac

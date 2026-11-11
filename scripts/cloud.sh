@@ -68,6 +68,7 @@ case "$cmd" in
       fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt,codec_name,profile -of csv=p=0 "$dest/$name" 2>/dev/null | head -1)
       case "$fmt" in
         *yuv422p10*) echo "  ✓ 10 бит 4:2:2 ($fmt)"; ok=$((ok+1)) ;;
+        ?*) if [ -n "${ANY_SOURCE:-}" ]; then echo "  ✓ принят ($fmt): итог всё равно 10 бит 4:2:2"; ok=$((ok+1)); continue; fi ;;&
         *) echo "  ✗ не 10 бит 4:2:2 (${fmt:-не видео}) — пропущен"; rm -f "$dest/$name"
            rs=$(mega-ls -l "$IN" </dev/null | awk -v n="$name" 'index($0, n) {print $3}' | head -1)
            grep -qxF "$name"$'\t'"$rs" "$skip" || printf '%s\t%s\n' "$name" "$rs" >> "$skip"
