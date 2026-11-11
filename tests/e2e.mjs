@@ -164,8 +164,9 @@ async function run(label, viewport, scale) {
   await page.click(".panel .tabs >> text=Цвет");
   await page.fill(".cp-hex", "#12ab34"); await page.locator(".cp-hex").blur();
   ok(await ed(() => window.__ed.P.subs.style.color) === "#12ab34", "цвет текста задаётся кодом");
+  await page.locator(".cp-sq").scrollIntoViewIfNeeded();
   const sq = await page.locator(".cp-sq").boundingBox();
-  await page.mouse.click(sq.x + sq.width * 0.9, sq.y + sq.height * 0.1);
+  await page.mouse.click(sq.x + sq.width * 0.9, sq.y + sq.height * 0.8);
   const col = await ed(() => window.__ed.P.subs.style.color);
   ok(col !== "#12ab34" && /^#[0-9a-f]{6}$/.test(col), `цвет выбирается на палитре (${col})`);
   await page.locator(".cp-hue").fill("200"); await page.waitForTimeout(100);
