@@ -133,24 +133,27 @@ async function run(label, viewport, scale) {
   await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 8000 });
   // текст: правка, ключевое слово, разделить
   await page.click(".panel .tabs >> text=Текст");
-  await page.locator(".item.line").first().click();
-  await page.fill(".sheet textarea", "Новый текст строки"); await page.click(".sheet >> text=Готово");
+  const le = page.locator(".line-edit").first();
+  await le.click(); await le.fill("Новый текст строки"); await page.locator(".panel-head b").click();
   await page.waitForTimeout(200);
-  ok((await ed(() => window.__ed.lines[0].raw)).startsWith("Новый текст"), "текст строки можно править");
+  ok((await ed(() => window.__ed.lines[0].raw)).startsWith("Новый текст") && !(await page.locator(".sheet").count()), "текст правится прямо в списке, без отдельного окна");
   await page.click('[aria-label="Отменить"]');
   ok(!(await ed(() => window.__ed.lines[0].raw)).startsWith("Новый"), "правка текста отменяется");
-  const n0 = await ed(() => window.__ed.lines.length);
-  await page.locator(".item.line").first().click();
+  const n0 = await ed(() => window.__ed.lines.length), raw0 = await ed(() => window.__ed.lines[0].raw), raw1 = await ed(() => window.__ed.lines[1].raw);
+  await page.locator(".line-edit").first().click();
+  await page.evaluate((n) => { const el = document.querySelector(".line-edit"); el.setSelectionRange(n, n); }, raw0.indexOf(" "));
+  await page.keyboard.press("Enter"); await page.waitForTimeout(250);
+  ok(await ed(() => window.__ed.lines.length) === n0 + 1 && await ed(() => window.__ed.lines[2].raw) === raw1, "Enter: слова после курсора стали отдельным субтитром, нижние сдвинулись");
+  ok(await page.evaluate(() => document.activeElement?.dataset?.i) === "1", "курсор перешёл в новую строку");
+  await page.keyboard.press("Backspace"); await page.waitForTimeout(250);
+  ok(await ed(() => window.__ed.lines.length) === n0 && await ed(() => window.__ed.lines[0].raw) === raw0, "стирание в начале строки склеивает её с верхней");
+  await page.locator(".panel-head b").click();
+  await page.locator('.lrow [aria-label^="Ещё"]').first().click();
   await page.locator(".sheet .wchip").first().click();
   ok(await ed(() => window.__ed.lines[0].words[0].em) === true, "слово отмечается ключевым");
   await shot("7b-line");
-  const raw0 = await page.locator(".sheet textarea").inputValue();
-  await page.fill(".sheet textarea", raw0.replace(" ", "\n")); await page.click(".sheet >> text=Готово"); await page.waitForTimeout(200);
-  ok(await ed(() => window.__ed.lines.length) === n0 + 1, "Enter в тексте делит строку на два субтитра");
-  await page.locator(".item.line").first().click();
-  await page.click(".sheet >> text=Склеить со следующей");
-  ok(await ed(() => window.__ed.lines.length) === n0, "строки склеиваются обратно");
   await page.click(".sheet >> text=Готово");
+  await page.click('[aria-label="Отменить"]');
   // шрифт из MEGA
   await page.click(".panel .tabs >> text=Шрифт");
   await page.click(".fonts >> text=Мой шрифт");
@@ -211,6 +214,20 @@ async function run(label, viewport, scale) {
   ok(await page.evaluate((wi) => { const l = window.__ed.lines[wi]; return l.words[0].style?.color === "#ff00aa" && !l.words[1]?.style && l.style?.color !== "#ff00aa" && window.__ed.P.subs.style.color !== "#ff00aa"; }, wi), "цвет сменился только у одного слова");
   await page.evaluate((wi) => window.__ed.seek(window.__ed.lines[wi].words[0].start + 0.2), wi); await page.waitForTimeout(300);
   await shot("7g-word");
+  // слои: субтитр уходит на второй этаж и двигается по времени
+  await ed(() => window.__ed.subApi.setWord(null));
+  await page.click('.layers [aria-label="Слой 2"]');
+  ok(await page.evaluate((wi) => window.__ed.lines[wi].layer === 1, wi) && await page.locator(".tl-subs .srow").count() === 2, "субтитр отправляется на второй слой — на таймлайне появляется второй этаж");
+  const s0 = await page.evaluate((wi) => window.__ed.lines[wi].start, wi);
+  const cb2 = await page.locator(".sub.one").boundingBox();
+  await page.mouse.move(cb2.x + cb2.width / 2, cb2.y + 10); await page.mouse.down(); await page.mouse.move(cb2.x + cb2.width / 2 + 40, cb2.y + 10, { steps: 4 }); await page.mouse.up();
+  const s1 = await page.evaluate((wi) => window.__ed.lines[wi].start, wi);
+  ok(s1 > s0 + 0.05, `субтитр на слое двигается по времени (${s0.toFixed(2)} → ${s1.toFixed(2)} с)`);
+  const gr2 = await page.locator(".sub.one .g.r").boundingBox(), e0 = await page.evaluate((wi) => window.__ed.lines[wi].end, wi);
+  await page.mouse.move(gr2.x + 4, gr2.y + 10); await page.mouse.down(); await page.mouse.move(gr2.x + 44, gr2.y + 10, { steps: 4 }); await page.mouse.up();
+  ok(await page.evaluate((wi) => window.__ed.lines[wi].end, wi) > e0 + 0.05, "и удлиняется за край");
+  await page.evaluate((wi) => window.__ed.seek(window.__ed.lines[wi].start + 0.3), wi); await page.waitForTimeout(300);
+  await shot("7g2-layers");
   await page.locator(".scope .check").click();
   ok(await ed(() => window.__ed.subApi.scope()) === "all", "галочка возвращает режим «все субтитры»");
   ok(await page.locator(".sub i.ain").count() > 0, "на плашках субтитров видна длительность анимации");
@@ -269,6 +286,7 @@ async function run(label, viewport, scale) {
   ok(job.subs && job.subs.lines.length >= 2 && job.subs.lines[0].words[0].text && job.subs.style.font, "субтитры ушли сборщику вместе с проектом");
   ok(job.subs.fonts?.[0]?.path === "Для монтажа ПАК/Шрифты/Мой шрифт.ttf", "сборщику передан путь к своему шрифту в MEGA");
   ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.clouds?.length === 1 && job.subs.clouds[0].a === 0.8, "свои настройки строк и слов и облако ушли сборщику");
+  ok(job.subs.lines.some((l) => l.style?.layer === 1), "слой субтитра ушёл сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');
 

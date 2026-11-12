@@ -21,7 +21,7 @@ export function buildJob(P, out, req) {
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
     timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1 },
-    ...(lines.length || clouds.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
+    ...(lines.length || clouds.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
   };
 }
 const STEPS = [["send", "Отправляю проект"], ["queued", "Жду свободный сборщик"], ["setup", "Сборщик готовится"], ["work", "Собираю видео в 4K"], ["done", "Готово"]];

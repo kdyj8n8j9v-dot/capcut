@@ -140,7 +140,7 @@ export async function openEditor(P, onExit) {
   }
   const grab = ed.querySelector(".tl-grab"), tl = ed.querySelector(".tl");
   const setTlh = (v) => { tl.style.height = clamp(v, 96, Math.round(innerHeight * 0.55)) + "px"; };
-  if (settings.get("tlh")) setTlh(settings.get("tlh"));
+
   let gdrag = null;
   grab.addEventListener("pointerdown", (e) => { gdrag = { y: e.clientY, h: tl.offsetHeight }; grab.setPointerCapture(e.pointerId); });
   grab.addEventListener("pointermove", (e) => { if (gdrag) setTlh(gdrag.h + gdrag.y - e.clientY); });
@@ -262,10 +262,29 @@ export async function openEditor(P, onExit) {
     subRow.style.width = total() * pps + "px";
     subRow.hidden = !lines.length;
     subRow.classList.toggle("off", !P.subs?.on);
-    subRow.replaceChildren(...lines.map((l, i) => h("button.sub" + (isSel(l) ? ".sel" : "") + (l.style || l.words.some((w) => w.style) ? ".own" : ""), { "data-i": i,
-      style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" } }, l.words.map((w) => w.text).join(" "), ...animBars(l))));
+    const one = !subAll && subSel.length === 1 ? subSel[0] : null, nLayers = Math.max(1, ...lines.map((l) => (l.layer | 0) + 1));
+    const chip = (l, i) => h("button.sub" + (isSel(l) ? ".sel" : "") + (lineId(l) === one ? ".one" : "") + (l.style || l.words.some((w) => w.style) ? ".own" : ""), { "data-i": i,
+      style: { left: l.start * pps + "px", width: Math.max(4, (l.end - l.start) * pps - 2) + "px" } }, l.words.map((w) => w.text).join(" "), ...animBars(l),
+      h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }));
+    requestAnimationFrame(autoTl);
+    subRow.replaceChildren(...Array.from({ length: nLayers }, (_, n) => h("div.srow", {}, lines.map((l, i) => ((l.layer | 0) === n ? chip(l, i) : null)))));
+    if (!sdrag) reveal(subRow.querySelector(".sub.one"));
   }
   // полоски на плашке: сколько длится появление и исчезание
+  // высота таймлайна сама подстраивается под число дорожек (пока владелец не задал свою за «ручку»)
+  function autoTl() {
+    const tlEl = ed.querySelector(".tl"), narrow = innerWidth < 820;
+    // на телефоне с открытой панелью превью важнее: таймлайн низкий и прокручивается
+    const cap = narrow && panel ? 104 : Math.round(innerHeight * (narrow ? 0.3 : 0.45));
+    const rows = ruler.offsetHeight + track.offsetHeight + (subRow.hidden ? 0 : subRow.offsetHeight + 3) + (cloudRow.hidden ? 0 : cloudRow.offsetHeight + 3);
+    const want = Math.min(cap, settings.get("tlh") || Math.max(112, rows + 30));
+    if (Math.abs(tlEl.offsetHeight - want) > 2) tlEl.style.height = want + "px";
+  }
+  // выбранный субтитр или облако должны быть видны: прокрутить дорожки по вертикали
+  function reveal(el) {
+    if (!el) return;
+    requestAnimationFrame(() => { if (!el.isConnected) return; const r = el.getBoundingClientRect(), b = scroll.getBoundingClientRect(); if (r.bottom > b.bottom - 2) scroll.scrollTop += r.bottom - b.bottom + 6; else if (r.top < b.top + 2) scroll.scrollTop -= b.top - r.top + 6; });
+  }
   function animBars(l) {
     const st = normStyle({ ...(P.subs.style || {}), ...(l.style || {}) }), len = l.end - l.start, out = [];
     if (st.in !== "none") out.push(h("i.ain", { style: { width: Math.min(len, st.inDur) * pps + "px" } }));
@@ -278,6 +297,7 @@ export async function openEditor(P, onExit) {
     cloudRow.style.width = total() * pps + "px"; cloudRow.hidden = !P.clouds.length;
     cloudRow.replaceChildren(...P.clouds.map((c) => h("div.cl" + (c.id === cloudSel ? ".sel" : ""), { "data-id": c.id, style: { left: c.start * pps + "px", width: Math.max(8, (c.end - c.start) * pps - 2) + "px" } },
       h("span", {}, "Облако"), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }))));
+    autoTl(); reveal(cloudRow.querySelector(".cl.sel"));
   }
   function addCloud() {
     begin(); pause();
@@ -325,7 +345,24 @@ export async function openEditor(P, onExit) {
   subRow.addEventListener("dblclick", (e) => { const b = e.target.closest(".sub"); if (b) { e.stopPropagation(); const l = lines[+b.dataset.i]; subSel = [lineId(l)]; subAll = false; relines(); renderPanel(); openLine(subApi, +b.dataset.i); } });
   // мышь: протянуть по дорожке субтитров — выбрать несколько подряд
   let lasso = null;
-  subRow.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse" || e.button) return; lasso = { x: e.clientX, id: e.pointerId, on: false, box: null }; });
+  let sdrag = null;
+  subRow.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".sub.one"); if (!el || e.button > 0) return;
+    const l = lines[+el.dataset.i], o = P.words[l.key][l.i0].ls || {};
+    e.stopPropagation(); pause();
+    sdrag = { key: l.key, i0: l.i0, i1: l.i1, side: e.target.dataset.side || "m", x: e.clientX, mv: o.mv || 0, ds: o.ds || 0, de: o.de || 0, id: e.pointerId, moved: false };
+    subRow.setPointerCapture(e.pointerId);
+  }, true);
+  subRow.addEventListener("pointermove", (e) => {
+    if (!sdrag || e.pointerId !== sdrag.id) return;
+    if (!sdrag.moved) { if (Math.abs(e.clientX - sdrag.x) < 4) return; sdrag.moved = true; begin(); P.words[sdrag.key][sdrag.i1].br = true; }
+    const d = (e.clientX - sdrag.x) / pps, o = (P.words[sdrag.key][sdrag.i0].ls ||= {});
+    if (sdrag.side === "l") o.ds = sdrag.ds + d; else if (sdrag.side === "r") o.de = sdrag.de + d; else o.mv = sdrag.mv + d;
+    relines(); draw();
+  });
+  const sdragEnd = (e) => { if (!sdrag || e.pointerId !== sdrag.id) return; const m = sdrag.moved; sdrag = null; if (m) { subRow.dataset.lasso = "1"; setTimeout(() => delete subRow.dataset.lasso, 60); renderPanel(); save(); } };
+  subRow.addEventListener("pointerup", sdragEnd); subRow.addEventListener("pointercancel", sdragEnd);
+  subRow.addEventListener("pointerdown", (e) => { if (sdrag || e.pointerType !== "mouse" || e.button) return; lasso = { x: e.clientX, id: e.pointerId, on: false, box: null }; });
   subRow.addEventListener("pointermove", (e) => {
     if (!lasso || e.pointerId !== lasso.id) return;
     if (!lasso.on) { if (Math.abs(e.clientX - lasso.x) < 6) return; lasso.on = true; subRow.setPointerCapture(e.pointerId); lasso.box = h("div.lasso"); subRow.append(lasso.box); }
@@ -373,6 +410,8 @@ export async function openEditor(P, onExit) {
       if (subAll) { const c = subStyle(), keep = {}; for (const k of POS) keep[k] = c[k]; P.subs.style = { ...v, ...keep }; }
       else for (const l of selLines()) { const w = P.words[l.key][l.i0], keep = {}; for (const k of POS) if (w.ls && k in w.ls) keep[k] = w.ls[k]; w.ls = { ...v, ...keep }; }
     },
+    // отправить выбранные субтитры на другой слой; строка при этом «замораживается» (её слова больше не перегруппируются)
+    setLayer(n) { for (const l of selLines()) { const src = P.words[l.key], o = (src[l.i0].ls ||= {}); if (n) o.layer = n; else delete o.layer; src[l.i1].br = true; delete src[l.i1].nb; } },
     resetOwn() { for (const l of selLines()) { if (subWord) delete P.words[subWord.key][subWord.idx].ws; else { for (let k = l.i0; k <= l.i1; k++) { delete P.words[l.key][k].ls; delete P.words[l.key][k].ws; } } } },
     change: (fn) => { begin(); fn(); relines(); draw(); renderPanel(); save(); },
     live: () => { relines(); draw(); save(); },
@@ -627,6 +666,7 @@ export async function openEditor(P, onExit) {
     side.hidden = !panel;
     ed.classList.toggle("with-panel", !!panel);
     ed.classList.toggle("tall", panel === "subs" && !!P.subs);
+    requestAnimationFrame(autoTl);
     if (!panel) return side.replaceChildren();
     const head = (title, onReset) => h("div.panel-head", {}, h("b", {}, title),
       h("div", {}, onReset && h("button.link", { onclick: onReset }, "Сбросить"), h("button.link.strong", { onclick: () => openPanel(panel) }, "Готово")));

@@ -45,6 +45,20 @@ export function colorPicker(get, set, begin) {
   return h("div.cp", {}, quick, sq, h("div.cp-row", {}, hueIn, hex));
 }
 
+// Записать новый текст строки. Каждая строчка текста (через Enter) становится отдельным субтитром.
+export function applyLineText(api, l, value) {
+  const src = api.P.words[l.key], n = l.i1 - l.i0 + 1;
+  const pieces = value.split("\n").map((x) => x.trim().split(/\s+/).filter(Boolean)).filter((x) => x.length), flat = pieces.flat();
+  if (pieces.length <= 1 && flat.join(" ") === l.raw) return false;
+  if (!flat.length) { api.change(() => src.splice(l.i0, n)); return true; }
+  const a = src[l.i0].start, b = src[l.i1].end, tail = { br: src[l.i1].br, nb: src[l.i1].nb };
+  const neu = flat.length === n ? flat.map((x, k) => ({ ...src[l.i0 + k], text: x }))
+    : flat.map((x, k) => ({ text: x, start: a + (b - a) * k / flat.length, end: a + (b - a) * (k + 1) / flat.length, ...(k === 0 && src[l.i0].ls ? { ls: src[l.i0].ls } : {}) }));
+  let at = 0;
+  pieces.forEach((pc, pi) => { for (let k = 0; k < pc.length; k++) { const w = neu[at + k]; delete w.br; delete w.nb; if (k === pc.length - 1) { if (pi < pieces.length - 1) w.br = true; else { if (tail.br) w.br = true; if (tail.nb) w.nb = true; } } else if (pieces.length > 1 || flat.length !== n) w.nb = true; } at += pc.length; });
+  api.change(() => src.splice(l.i0, n, ...neu));
+  return true;
+}
 let wordsOpen = false, tab = 0, colorTab = 0, animTab = 0, fontQuery = "", packList = null, packLocal = new Set(), packErr = "";
 
 // api: { P, cur, st, lines, change(fn), live(), begin, slider, head, rerender, seek, playLine, makeSubs, making, toastErr }
@@ -106,9 +120,38 @@ export function subsPanel(api) {
       mine.length ? h("div.presets", {}, mine.map((m, i) => tile(m.name, m.style, async () => { if (await ask("Удалить стиль?", `«${m.name}»`)) { settings.set("subStyles", mine.filter((_, k) => k !== i)); rerender(); } })))
         : h("p.hint", {}, "Настройте вид как нравится и сохраните — стиль появится здесь и в других проектах.")];
   } else if (tab === 1) {     // ——— текст
-    body = [h("p.hint", {}, "Нажмите на строку, чтобы поправить текст. Enter внутри текста делит строку на отдельные субтитры."),
-      h("div.list", {}, lines.length ? lines.map((l, i) => h("button.item.line", { onclick: () => { api.seek(l.start + 0.02); openLine(api, i); } },
-        h("small", {}, fmtTime(l.start, true)), h("span.item-main", {}, l.words.map((w) => h("span" + (w.em ? ".em" : ""), { style: w.em ? { color: cur.emColor } : {} }, w.text + " "))))) : h("p.muted", {}, "В ролике нет распознанной речи.")),
+    // правка прямо в списке: Enter — слова после курсора уходят в новый субтитр ниже; стирание в начале строки склеивает с верхней
+    const focusLine = (k, pos) => requestAnimationFrame(() => { const el = document.querySelector(`.panel .line-edit[data-i="${k}"]`); if (el) { el.focus(); const p = pos < 0 ? el.value.length : pos; el.setSelectionRange(p, p); } });
+    const grow = (el) => { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; };
+    const row = (l, i) => {
+      const ta = h("textarea.line-edit", { value: l.raw, rows: 1, "data-i": i, "aria-label": "Субтитр " + (i + 1), autocapitalize: "off", spellcheck: false,
+        onfocus: () => api.seek(l.start + Math.min(0.2, (l.end - l.start) / 2)),
+        oninput: () => grow(ta),
+        onblur: (e) => { if (ta.dataset.skip) return; const to = e.relatedTarget && e.relatedTarget.classList && e.relatedTarget.classList.contains("line-edit") ? +e.relatedTarget.dataset.i : null;
+          if (applyLineText(api, l, ta.value) && to != null) focusLine(to, -1); },
+        onkeydown: (e) => {
+          if (e.key === "Enter" && !e.isComposing) {
+            e.preventDefault();
+            const a = ta.value.slice(0, ta.selectionStart).trim(), b = ta.value.slice(ta.selectionEnd).trim();
+            if (!a || !b) return;
+            ta.dataset.skip = "1"; applyLineText(api, l, a + "\n" + b); focusLine(i + 1, 0);
+          } else if (e.key === "Backspace" && ta.selectionStart === 0 && ta.selectionEnd === 0 && i > 0) {
+            const prev = lines[i - 1];
+            if (prev.key !== l.key || prev.i1 + 1 !== l.i0) return;
+            e.preventDefault(); ta.dataset.skip = "1";
+            const at = prev.raw.length + 1, src = P.words[l.key], text = ta.value;
+            // сначала записать то, что набрано в этой строке, потом склеить с верхней
+            if (text.trim() !== l.raw && text.trim()) applyLineText(api, l, text.replace(/\n/g, " "));
+            change(() => { const w = src[prev.i1]; w.nb = true; delete w.br; const f = src[prev.i1 + 1]; if (f && f.ls) delete f.ls; });
+            focusLine(i - 1, at);
+          }
+        } });
+      requestAnimationFrame(() => grow(ta));
+      return h("div.lrow" + (l.layer ? ".up" : ""), {}, h("small", {}, fmtTime(l.start, true)), ta,
+        h("button.round.sm", { onclick: () => { api.seek(l.start + 0.02); openLine(api, i); }, "aria-label": "Ещё: ключевые слова, время" }, icon("more", 16)));
+    };
+    body = [h("p.hint", {}, "Нажмите на текст и правьте. Enter — слова после курсора станут отдельным субтитром ниже. Стирание в самом начале строки склеивает её с верхней."),
+      h("div.lines", {}, lines.length ? lines.map(row) : h("p.muted", {}, "В ролике нет распознанной речи.")),
       sl("Букв в строке", "maxChars", 1, 40, (v) => Math.round(v), 1),
       seg([["none", "Как есть"], ["upper", "ЗАГЛАВНЫЕ"], ["lower", "строчные"]], cur.case, (k) => change(() => st().case = k), false),
       toggle("Знаки препинания", "punct"),
@@ -173,6 +216,9 @@ export function subsPanel(api) {
   const scopeBox = h("div.scope", {},
     h("button.check" + (api.all ? ".on" : ""), { onclick: () => api.setAll(!api.all) }, h("i", {}, api.all ? icon("check", 14) : null), "Менять все субтитры сразу"),
     !api.all && h("div.scope-info", {}, h("span", {}, info), own && h("button.link", { onclick: () => change(() => api.resetOwn()) }, "Вернуть общий вид")),
+    !api.all && sel.length > 0 && !wordMode && h("div.layers", {}, h("small.muted", {}, "Слой"),
+      [0, 1, 2, 3].map((n) => h("button" + ((sel[0].layer | 0) === n ? ".on" : ""), { onclick: () => change(() => api.setLayer(n)), "aria-label": "Слой " + (n + 1) }, n + 1)),
+      h("small.muted", {}, sel[0].layer ? "поверх" : "основной")),
     !api.all && one && (wordsOpen || wordMode
       ? h("div.wrow", {}, P.words[one.key].slice(one.i0, one.i1 + 1).map((w, k) => h("button.wchip.sm" + (api.word && api.word.idx === one.i0 + k ? ".on" : ""), { onclick: () => api.setWord(api.word && api.word.idx === one.i0 + k ? null : one.i0 + k) }, w.text)))
       : one.i1 > one.i0 && h("button.link.sm", { onclick: () => { wordsOpen = true; rerender(); } }, "Изменить только одно слово")));
@@ -193,18 +239,7 @@ export function openLine(api, index) {
     const src = P.words[l.key], n = l.i1 - l.i0 + 1, next = api.lines()[index + 1];
     const canJoin = next && next.key === l.key && next.i0 === l.i1 + 1;
     const inp = h("textarea.field.area", { value: l.raw, rows: 3, "aria-label": "Текст строки", autocapitalize: "off" });
-    const applyText = () => {
-      const pieces = inp.value.split("\n").map((x) => x.trim().split(/\s+/).filter(Boolean)).filter((x) => x.length), flat = pieces.flat();
-      if (pieces.length <= 1 && flat.join(" ") === l.raw) return false;
-      const a = src[l.i0].start, b = src[l.i1].end, tail = { br: src[l.i1].br, nb: src[l.i1].nb };
-      const neu = flat.length === n ? flat.map((x, k) => ({ ...src[l.i0 + k], text: x }))
-        : flat.map((x, k) => ({ text: x, start: a + (b - a) * k / flat.length, end: a + (b - a) * (k + 1) / flat.length, ...(k === 0 && src[l.i0].ls ? { ls: src[l.i0].ls } : {}) }));
-      // каждая строка текста — отдельный субтитр
-      let at = 0;
-      pieces.forEach((pc, pi) => { for (let k = 0; k < pc.length; k++) { const w = neu[at + k]; delete w.br; delete w.nb; if (k === pc.length - 1) { if (pi < pieces.length - 1) w.br = true; else { if (tail.br) w.br = true; if (tail.nb) w.nb = true; } } else if (pieces.length > 1 || flat.length !== n) w.nb = true; } at += pc.length; });
-      change(() => src.splice(l.i0, n, ...neu));
-      return true;
-    };
+    const applyText = () => applyLineText(api, l, inp.value);
     const nudge = (which, d) => change(() => { const w = which ? src[l.i1] : src[l.i0]; if (which) w.end = Math.max(w.start + 0.05, w.end + d); else w.start = Math.max(0, Math.min(w.end - 0.05, w.start + d)); });
     const words = [];
     for (let k = 0; k < n; k++) {

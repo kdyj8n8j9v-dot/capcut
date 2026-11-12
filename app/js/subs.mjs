@@ -86,12 +86,21 @@ export function buildLines(clips, words, style) {
     at += len;
     for (let k = from; k < lines.length; k++) lines[k].clipEnd = at;
   }
+  // слой и своё время строки (записаны у первого слова): layer — этаж на таймлайне, mv — сдвиг, ds/de — начало и конец
+  lines.forEach((l) => { delete l.eff; l.layer = (l.style && l.style.layer) | 0; });
   lines.forEach((l, i) => {
-    const next = lines[i + 1]; delete l.eff;
-    l.end = Math.min(l.end + TAIL, next ? next.start : Infinity, l.clipEnd + TAIL);
+    const o = l.style || {};
+    let next = null;
+    if (!l.layer) for (let k = i + 1; k < lines.length; k++) if (!lines[k].layer) { next = lines[k]; break; }
+    l.end = o.de != null || l.layer ? l.end + TAIL + (o.de || 0) : Math.min(l.end + TAIL, next ? next.start : Infinity, l.clipEnd + TAIL);
     l.raw = ((words[l.key] || []).slice(l.i0, l.i1 + 1)).map((w) => w.text).join(" ");
-    if (st.shift) { l.start += st.shift; l.end += st.shift; for (const w of l.words) { w.start += st.shift; w.end += st.shift; } }
+    const sh = (st.shift || 0) + (o.mv || 0);
+    if (sh) { l.start += sh; l.end += sh; for (const w of l.words) { w.start += sh; w.end += sh; } }
+    if (o.ds) l.start = Math.min(l.end - 0.1, Math.max(0, l.start + o.ds));
+    if (l.end < l.start + 0.1) l.end = l.start + 0.1;
   });
+  // обычная строка не залезает на следующую того же слоя
+  lines.forEach((l, i) => { if (l.layer || (l.style && l.style.de != null)) return; for (let k = i + 1; k < lines.length; k++) if (!lines[k].layer) { l.end = Math.max(l.start + 0.1, Math.min(l.end, lines[k].start)); break; } });
   return lines;
 }
 
@@ -138,9 +147,13 @@ function rgba(hex, a) {
 
 // Нарисовать субтитры момента t (секунды ролика) на холсте W×H. Возвращает true, если что-то нарисовано.
 export function drawSubs(ctx, W, H, t, lines, style) {
-  const li = lines.findIndex((l) => t >= l.start && t < l.end);
-  if (li < 0) return false;
-  const line = lines[li], st = normStyle(line.style ? { ...style, ...line.style } : style), px = st.size * W, lh = px * st.lh, maxW = W * st.wrap / st.sx, sp = Math.max(0, px * 0.32 + (st.ls + st.ws) * px), ls = st.ls * px;
+  // на экране может быть несколько строк сразу — по одной с каждого слоя; верхние слои рисуются поверх
+  const act = lines.filter((l) => t >= l.start && t < l.end).sort((a, b) => (a.layer | 0) - (b.layer | 0));
+  for (const line of act) drawLine(ctx, W, H, t, line, style);
+  return act.length > 0;
+}
+function drawLine(ctx, W, H, t, line, style) {
+  const st = normStyle(line.style ? { ...style, ...line.style } : style), px = st.size * W, lh = px * st.lh, maxW = W * st.wrap / st.sx, sp = Math.max(0, px * 0.32 + (st.ls + st.ws) * px), ls = st.ls * px;
   const perChar = st.in === "letters" || st.in === "type" || st.loop === "wave" || ls !== 0;
   ctx.save();
   const fontOf = (w) => `${(w && w.style && w.style.size ? w.style.size * W : px)}px "${(w && w.style && w.style.font) || st.font}", sans-serif`;
