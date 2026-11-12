@@ -55,6 +55,7 @@ h1 { font-size: 34px; font-weight: 700; margin: 0; letter-spacing: -.5px; }
 .card b { margin-top: 8px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card small { color: var(--muted); font-size: 13px; }
 .thumb { position: relative; aspect-ratio: 4/5; border-radius: 14px; background: var(--s1) center/cover; display: grid; place-items: center; color: var(--muted); }
+.newtag { color: var(--accent); font-weight: 600; }
 .card.new .thumb { color: var(--accent); border: 1.5px dashed var(--s3); background: none; }
 .del { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; background: rgba(0,0,0,.55); color: #fff; }
 

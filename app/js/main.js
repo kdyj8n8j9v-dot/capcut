@@ -5,21 +5,23 @@ import { cloud } from "./cloud.js";
 import { github, REPO } from "./github.js";
 import { openEditor } from "./editor.js";
 import { resumePending } from "./media.js";
+import { pullProjects, removeProject } from "./sync.js";
 
 const root = document.getElementById("app");
 const day = (ts) => new Date(ts).toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
 
-async function home() {
+let pulling = false;
+async function home(pull = true) {
   const projects = (await db.all("projects")).sort((a, b) => b.updated - a.updated);
   const ready = cloud.signedIn() && github.has();
-  const open = (p) => openEditor(p, home);
+  const open = (p) => { if (p.fresh) { delete p.fresh; db.put("projects", p); } openEditor(p, home); };
   const create = async () => {
     const p = { id: uid(), name: "Проект " + (projects.length + 1), created: Date.now(), updated: Date.now(), format: "9:16", clips: [], media: {}, grade: {}, volume: 1 };
     await db.put("projects", p); open(p);
   };
   const del = async (p, e) => {
     e.stopPropagation();
-    if (await ask("Удалить проект?", `«${p.name}» исчезнет с этого устройства. Видео в MEGA останутся.`)) { await db.del("projects", p.id); home(); }
+    if (await ask("Удалить проект?", `«${p.name}» исчезнет с этого устройства. Видео в MEGA останутся.`)) { await db.del("projects", p.id); removeProject(p.id); home(false); }
   };
   root.replaceChildren(h("div.home", {},
     h("header.home-head", {}, h("h1", {}, "Проекты"), h("button.round", { onclick: openSettings, "aria-label": "Настройки" }, icon("gear", 22))),
@@ -30,7 +32,9 @@ async function home() {
       projects.map((p) => h("div.card", { onclick: () => open(p), role: "button", tabIndex: 0 },
         h("div.thumb", { style: p.thumb ? { backgroundImage: `url(${p.thumb})` } : {} }, !p.thumb && icon("film", 30),
           h("button.round.del", { onclick: (e) => del(p, e), "aria-label": "Удалить проект" }, icon("trash", 16))),
-        h("b", {}, p.name), h("small", {}, `${fmtTime(p.duration || 0)} · ${day(p.updated)}`))))));
+        h("b", {}, p.name), h("small", {}, p.fresh ? h("span.newtag", {}, p.by === "claude" ? "новое из чата «Монтаж»" : "обновлён с другого устройства") : `${fmtTime(p.duration || p.clips?.reduce((a, c) => a + c.out - c.in, 0) || 0)} · ${day(p.updated)}`))))));
+  // проекты из облака: от чата «Монтаж» и с других устройств
+  if (pull && !pulling && cloud.signedIn()) { pulling = true; pullProjects().then((n) => { pulling = false; if (n && document.querySelector(".home")) home(false); }).catch(() => { pulling = false; }); }
 }
 
 function openSettings() {

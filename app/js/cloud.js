@@ -1,7 +1,7 @@
 // MEGA прямо из браузера (библиотека megajs). Вход хранится только на устройстве: ключ сеанса, без пароля.
 import { settings } from "./store.js";
 
-export const PATHS = { in: "Исходники", out: "10 бит", studio: "10 бит/.studio", jobs: "10 бит/.studio/jobs", pack: "Для монтажа ПАК" };
+export const PATHS = { in: "Исходники", out: "10 бит", studio: "10 бит/.studio", jobs: "10 бит/.studio/jobs", projects: "10 бит/.studio/projects", pack: "Для монтажа ПАК" };
 const norm = (s) => (s || "").normalize("NFC");
 let st = null, opening = null;
 const lib = () => import("../vendor/mega.mjs");
@@ -102,6 +102,7 @@ const real = {
     })();
     await Promise.race([feed, fail]);
   },
+  async remove(path, name) { const n = await this.node(path, name); if (n) await n.delete(true); },
   async putText(path, name, text) { await this.upload(path, name, new Blob([text])); },
   async getText(path, name) { return (await this.download(path, name)).text(); },
 };

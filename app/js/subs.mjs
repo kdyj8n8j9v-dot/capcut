@@ -140,6 +140,31 @@ export function drawClouds(ctx, W, H, t, clouds) {
   return any;
 }
 
+// Маска клипа: видно только внутри фигуры (или только снаружи, если invert), остальное — чёрное. Края можно растушевать.
+// Рисуется первой в общем слое (под облаками и субтитрами), поэтому превью и готовое видео совпадают.
+export const MASK_DEFAULT = { shape: "rect", x: 0.5, y: 0.5, w: 0.8, h: 0.5, rot: 0, feather: 0.06, round: 0.12, invert: false };
+export const MASK_SHAPES = [["none", "Нет"], ["rect", "Прямоугольник"], ["ellipse", "Круг"], ["band", "Полоса"], ["line", "Линия"]];
+export function drawMask(ctx, W, H, m0) {
+  if (!m0 || !m0.shape || m0.shape === "none") return false;
+  const m = { ...MASK_DEFAULT, ...m0 }, S = Math.max(W, H), f = m.feather * Math.min(W, H) * 0.5, w = m.w * W, h = m.h * H, OFF = S * 4;
+  ctx.save();
+  ctx.fillStyle = "#000000";
+  if (!m.invert) { ctx.fillRect(0, 0, W, H); ctx.globalCompositeOperation = "destination-out"; }
+  // растушёвка: сама фигура рисуется далеко за кадром, в кадр попадает только её размытая «тень»
+  const soft = f > 0.5;
+  if (soft) { ctx.shadowColor = "#000000"; ctx.shadowBlur = f * 2; ctx.shadowOffsetX = -OFF; }
+  ctx.translate(m.x * W + (soft ? OFF : 0), m.y * H); ctx.rotate(m.rot * Math.PI / 180);
+  ctx.beginPath();
+  if (m.shape === "ellipse") ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+  else if (m.shape === "band") ctx.rect(-3 * S, -h / 2, 6 * S, h);
+  else if (m.shape === "line") ctx.rect(-3 * S, 0, 6 * S, 3 * S);
+  else if (ctx.roundRect) ctx.roundRect(-w / 2, -h / 2, w, h, m.round * Math.min(w, h) / 2);
+  else ctx.rect(-w / 2, -h / 2, w, h);
+  ctx.fill();
+  ctx.restore();
+  return true;
+}
+
 function rgba(hex, a) {
   const n = parseInt((hex || "#000000").slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;

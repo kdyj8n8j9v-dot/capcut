@@ -1,6 +1,7 @@
 // Подставные MEGA и GitHub для автопроверок приложения (без сети и без входа).
 (() => {
-  const files = {};  // "папка/имя" → Blob
+  const files = {}, stamps = {};  // "папка/имя" → Blob; время записи
+  let clock = 100;
   const log = [];
   const sample = fetch("/tests/sample.webm").then((r) => r.blob());
   const ready = (async () => {
@@ -19,11 +20,12 @@
     async login(email, password) { if (password !== "верный") throw new Error("Неверная почта или пароль MEGA."); s.set("mega", { email }); },
     logout() { localStorage.removeItem("studio.mega"); },
     async open() {}, async refresh() { await ready; },
-    async list(path) { await ready; const p = path + "/"; return Object.keys(files).filter((k) => k.startsWith(p) && !k.slice(p.length).includes("/")).map((k) => ({ name: k.slice(p.length), size: files[k].size, ts: 1, dir: false })); },
+    async list(path) { await ready; const p = path + "/"; return Object.keys(files).filter((k) => k.startsWith(p) && !k.slice(p.length).includes("/")).map((k) => ({ name: k.slice(p.length), size: files[k].size, ts: stamps[k] || 1, dir: false })); },
     async find(path, re) { await ready; return Object.keys(files).filter((k) => k.startsWith(path + "/") && re.test(k)).map((k) => ({ name: k.split("/").pop(), path: k.split("/").slice(0, -1).join("/"), size: files[k].size })); },
     async download(path, name, onProgress) { await ready; const b = files[path + "/" + name]; if (!b) throw new Error("В MEGA нет файла: " + name); onProgress && onProgress(1); return b; },
-    async upload(path, name, blob, onProgress) { onProgress && onProgress(0.5); await new Promise((r) => setTimeout(r, 300)); files[path + "/" + name] = blob; log.push("upload " + path + "/" + name); },
-    async putText(path, name, text) { files[path + "/" + name] = new Blob([text]); log.push("put " + path + "/" + name); },
+    async upload(path, name, blob, onProgress) { onProgress && onProgress(0.5); await new Promise((r) => setTimeout(r, 300)); files[path + "/" + name] = blob; stamps[path + "/" + name] = ++clock; log.push("upload " + path + "/" + name); },
+    async remove(path, name) { delete files[path + "/" + name]; },
+    async putText(path, name, text) { files[path + "/" + name] = new Blob([text]); stamps[path + "/" + name] = ++clock; log.push("put " + path + "/" + name); },
     async getText(path, name) { return (await this.download(path, name)).text(); },
   };
   const runs = {};

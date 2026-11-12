@@ -13,6 +13,7 @@ export function buildJob(P, out, req) {
   const used = [...new Set(P.clips.map((c) => c.media))];
   const style = normStyle(P.subs?.style), lines = P.subs?.on ? buildLines(P.clips, P.words || {}, style) : [];
   const dur = P.clips.reduce((x, c) => x + c.out - c.in, 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
+  const masks = []; { let at = 0; for (const c of P.clips) { const len = c.out - c.in; if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
   // свои шрифты (общий, отдельных строк и слов): сборщик возьмёт те же файлы из MEGA
   const names = new Set([style.font, ...lines.flatMap((l) => [l.style?.font, ...l.words.map((w) => w.style?.font)])].filter((n) => n && !FONTS[n]));
   const pf = [...names].map(packFont).filter(Boolean).map((f) => ({ name: f.name, path: f.path + "/" + f.file }));
@@ -21,7 +22,7 @@ export function buildJob(P, out, req) {
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
     timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1 },
-    ...(lines.length || clouds.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
+    ...(lines.length || clouds.length || masks.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(masks.length ? { masks } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
   };
 }
 const STEPS = [["send", "Отправляю проект"], ["queued", "Жду свободный сборщик"], ["setup", "Сборщик готовится"], ["work", "Собираю видео в 4K"], ["done", "Готово"]];

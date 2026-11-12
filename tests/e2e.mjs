@@ -117,6 +117,14 @@ async function run(label, viewport, scale) {
   await page.click("text=Показать целиком"); await page.waitForTimeout(100);
   await shot("9-fit");
   await page.click(".panel-head >> text=Готово");
+  // маска
+  await page.click('[data-tool=mask]'); await page.click(".tiles >> text=Круг");
+  await page.locator('input[aria-label="Растушёвка края"]').fill("0.2");
+  const corner = () => page.evaluate(() => { const c = document.querySelector("canvas.over"); return [...c.getContext("2d").getImageData(3, 3, 1, 1).data, ...c.getContext("2d").getImageData(c.width >> 1, c.height >> 1, 1, 1).data]; });
+  const mk = await corner();
+  ok(mk[3] > 240 && mk[7] < 20 && await ed(() => window.__ed.P.clips[0].mask?.shape) === "ellipse", "маска «Круг»: угол кадра закрыт, центр виден");
+  await shot("9a-mask");
+  await page.click(".panel-head >> text=Готово");
 
   // субтитры
   await page.click('[data-tool=subs]');
@@ -287,15 +295,27 @@ async function run(label, viewport, scale) {
   ok(job.subs.fonts?.[0]?.path === "Для монтажа ПАК/Шрифты/Мой шрифт.ttf", "сборщику передан путь к своему шрифту в MEGA");
   ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.clouds?.length === 1 && job.subs.clouds[0].a === 0.8, "свои настройки строк и слов и облако ушли сборщику");
   ok(job.subs.lines.some((l) => l.style?.layer === 1), "слой субтитра ушёл сборщику");
+  ok(job.subs.masks?.length === 1 && job.subs.masks[0].shape === "ellipse" && job.subs.masks[0].start === 0, "маска клипа ушла сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');
+
+  // проект в облаке: уходит сам, новая версия «из чата» подтягивается
+  await ed(() => window.__ed.push()); await page.waitForTimeout(300);
+  const pid = await ed(() => window.__ed.P.id);
+  ok(await page.evaluate((id) => !!window.__fakeFiles["10 бит/.studio/projects/" + id + ".json"], pid), "проект сам сохраняется в MEGA (общий с чатом «Монтаж»)");
+  await page.evaluate(async (id) => { const k = "10 бит/.studio/projects/" + id + ".json", p = JSON.parse(await window.__fakeFiles[k].text()); p.name = "Правка из чата"; p.by = "claude"; p.updated = Date.now() + 5000; p.grade.contrast = 0.33; await window.__fakeCloud.putText("10 бит/.studio/projects", id + ".json", JSON.stringify(p)); }, pid);
+  await ed(() => window.__ed.checkRemote()); await page.waitForTimeout(400);
+  ok(await ed(() => window.__ed.P.name) === "Правка из чата" && await ed(() => window.__ed.P.grade.contrast) === 0.33 && (await page.locator(".bar .title").textContent()) === "Правка из чата", "открытый проект обновился версией из чата");
+  await page.evaluate(() => window.__fakeCloud.putText("10 бит/.studio/projects", "mchat1.json", JSON.stringify({ id: "mchat1", name: "Ролик от Claude", by: "claude", created: 1, updated: Date.now(), format: "9:16", clips: [], media: {}, grade: {}, volume: 1, words: {}, clouds: [] })));
 
   // назад и снова открыть — проект сохранился
   await page.click(".bar .link");
   await page.waitForSelector(".card:not(.new)");
+  await page.waitForSelector(".newtag", { timeout: 10000 });
+  ok((await page.locator(".card >> text=Ролик от Claude").count()) === 1, "проект, положенный чатом, появился на главном экране с пометкой");
   await shot("14-home-projects");
   await page.reload(); await page.waitForSelector(".card:not(.new)");
-  await page.click(".card:not(.new)");
+  await page.click(".card >> text=Правка из чата");
   await page.waitForFunction(() => window.__ed && window.__ed.P.clips.length === 2);
   await page.waitForFunction(() => { const c = document.querySelector(".view canvas"), g = c.getContext("webgl"), b = new Uint8Array(4); g.readPixels(c.width >> 1, c.height >> 1, 1, 1, g.RGBA, g.UNSIGNED_BYTE, b); return b[0] + b[1] + b[2] > 30; });
   ok(true, "после перезапуска проект и превью на месте");

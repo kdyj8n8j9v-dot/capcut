@@ -51,7 +51,7 @@ import json, sys
 print(json.dumps({"id": "selftest", "name": "selftest", "output": {"w": 2160, "h": 3840}, "clips": {"a": {"file": sys.argv[1]}},
                   "timeline": [{"clip": "a", "in": 1.0, "out": 2.0, "frame": {"scale": 1.2, "rot": 3}}, {"clip": "a", "in": 3.0, "out": 4.0}],
                   "grade": {"exposure": 0.2, "contrast": 0.2, "clarity": 0.3, "vignette": -0.3, "saturation": 0.1}, "audio": {"volume": 1},
-                  "subs": {"style": {"in": "letters", "hl": "fill", "glow": 0.4}, "clouds": [{"start": 0.2, "end": 1.8, "x": 0.5, "y": 0.72, "w": 0.9, "h": 0.2, "a": 0.6}], "lines": [{"start": 0.1, "end": 1.9, "words": [{"text": "Проверка", "start": 0.1, "end": 0.9}, {"text": "субтитров", "start": 0.9, "end": 1.8}]}]}}, ensure_ascii=False))
+                  "subs": {"style": {"in": "letters", "hl": "fill", "glow": 0.4}, "masks": [{"shape": "ellipse", "w": 0.95, "h": 0.8, "feather": 0.1, "start": 0, "end": 1}], "clouds": [{"start": 0.2, "end": 1.8, "x": 0.5, "y": 0.72, "w": 0.9, "h": 0.2, "a": 0.6}], "lines": [{"start": 0.1, "end": 1.9, "words": [{"text": "Проверка", "start": 0.1, "end": 0.9}, {"text": "субтитров", "start": 0.9, "end": 1.8}]}]}}, ensure_ascii=False))
 PY
     else
       case "$req" in *[!A-Za-z0-9]*|"") echo "плохой номер задания" >&2; exit 2 ;; esac

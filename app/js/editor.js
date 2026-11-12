@@ -1,14 +1,15 @@
 // Редактор: превью, таймлайн (резка, обрезка краёв, перестановка), кадр, цвет, звук.
-import { h, icon, sheet, toast, askText, fmtTime, clamp } from "./ui.js";
+import { h, icon, sheet, toast, ask, askText, fmtTime, clamp } from "./ui.js";
 import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
 import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords } from "./media.js";
-import { buildLines, drawSubs, drawClouds, normStyle, PRESETS, CLOUD_DEFAULT } from "./subs.mjs";
+import { buildLines, drawSubs, drawClouds, drawMask, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
 import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
 import { openLibrary } from "./library.js";
 import { openExport } from "./export.js";
+import { pushProject, remoteNewer } from "./sync.js";
 
 export const FORMATS = {
   "9:16": { w: 2160, h: 3840, label: "Вертикальное", hint: "Reels, Shorts, TikTok" },
@@ -54,7 +55,31 @@ export async function openEditor(P, onExit) {
   function save() {
     clearTimeout(saveT);
     saveT = setTimeout(() => { P.updated = Date.now(); P.duration = total(); db.put("projects", P).catch(() => {}); }, 300);
+    dirty = true; clearTimeout(pushT); pushT = setTimeout(push, 4000);
   }
+  // облако: проект уходит в MEGA через несколько секунд после правки; новые версии из чата «Монтаж» подтягиваются сами
+  let dirty = false, pushT, pushing = false;
+  async function push() {
+    if (pushing || !alive || !dirty || !cloud.signedIn()) return;
+    pushing = true; dirty = false;
+    try { await pushProject(P); } catch { dirty = true; }
+    pushing = false;
+  }
+  async function checkRemote() {
+    if (!alive || pushing || document.hidden) return;
+    try {
+      const r = await remoteNewer(P);
+      if (!r || !alive) return;
+      if (dirty && !(await ask("В облаке новая версия проекта", "Её прислал чат «Монтаж» или другое устройство. Загрузить её? Ваши последние правки на этом устройстве заменятся.", "Загрузить", false))) return;
+      for (const k of Object.keys(P)) delete P[k];
+      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= [];
+      dirty = false; undo.length = redo.length = 0; sel = null; cloudSel = null; subSel = []; subAll = true; subWord = null;
+      await db.put("projects", P); titleBtn.textContent = P.name;
+      pause(); await loadAll(); fit(); renderPanel(); syncBar(); seek(Math.min(t, total()));
+      toast("Проект обновлён: пришла новая версия из чата «Монтаж»", 4000);
+    } catch {}
+  }
+  const remoteTimer = setInterval(checkRemote, 25000);
   function begin() { const s = snap(); if (undo[undo.length - 1] !== s) undo.push(s); if (undo.length > 100) undo.shift(); redo.length = 0; syncBar(); }
   function restore(from, to) {
     if (!from.length) return;
@@ -86,7 +111,7 @@ export async function openEditor(P, onExit) {
   const tool = (id, ic, label, fn) => h("button.tool", { "data-tool": id, onclick: fn }, icon(ic), h("span", {}, label));
   const tools = h("nav.tools", {},
     tool("media", "plus", "Медиа", addMedia), tool("split", "split", "Разрезать", split),
-    tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("color", "color", "Цвет", () => openPanel("color")),
+    tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("mask", "mask", "Маска", () => openPanel("mask")), tool("color", "color", "Цвет", () => openPanel("color")),
     tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
   const ed = h("div.ed", {},
     h("header.bar", {},
@@ -190,6 +215,7 @@ export async function openEditor(P, onExit) {
     else R.draw(null);
     const c2 = over.getContext("2d");
     c2.clearRect(0, 0, over.width, over.height);
+    drawMask(c2, over.width, over.height, loc && loc.clip.mask);
     drawClouds(c2, over.width, over.height, t, P.clouds);
     if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
   }
@@ -207,7 +233,7 @@ export async function openEditor(P, onExit) {
     if (!fromScroll) scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
     draw();
-    if (panel === "frame" && loc?.clip.id !== shown && !ptrs.size) renderPanel();
+    if ((panel === "frame" || panel === "mask") && loc?.clip.id !== shown && !ptrs.size) renderPanel();
   }
   function setVolume() { for (const r of vids.values()) { r.v.volume = clamp(P.volume, 0, 1); r.v.muted = P.volume <= 0; } }
   function play() {
@@ -602,7 +628,7 @@ export async function openEditor(P, onExit) {
     if (!loc || loc.local < MIN_LEN || len(loc.clip) - loc.local < MIN_LEN) return toast("Поставьте линию туда, где нужно разрезать");
     begin(); pause();
     const c = loc.clip, cut = c.in + loc.local;
-    const b = { ...c, id: uid(), in: cut, frame: c.frame && { ...c.frame } };
+    const b = { ...c, id: uid(), in: cut, frame: c.frame && { ...c.frame }, ...(c.mask ? { mask: { ...c.mask } } : {}) };
     c.out = cut;
     P.clips.splice(loc.i + 1, 0, b);
     sel = b.id; layout(); seek(t); save();
@@ -704,6 +730,19 @@ export async function openEditor(P, onExit) {
       }
       subApi.slider = slider; subApi.head = head;
       side.replaceChildren(...subsPanel(subApi).flat(9).filter(Boolean));
+    } else if (panel === "mask") {
+      const c = target(); shown = c?.id;
+      if (!c) return side.replaceChildren(head("Маска"), h("p.muted", {}, "Добавьте видео."));
+      const m = c.mask && c.mask.shape !== "none" ? c.mask : null;
+      const setShape = (k) => { begin(); if (k === "none") delete c.mask; else c.mask = { ...MASK_DEFAULT, ...(c.mask || {}), shape: k }; renderPanel(); draw(); save(); };
+      const msl = (label, key, min, max, show, step) => slider(label, () => c.mask[key] ?? MASK_DEFAULT[key], (v) => { c.mask[key] = v; }, { min, max, step, def: MASK_DEFAULT[key], show });
+      side.replaceChildren(head("Маска", m && (() => setShape("none"))),
+        h("p.hint", {}, "Оставляет видимой только часть кадра этого клипа. Двигайте маску пальцем прямо на видео, двумя пальцами — размер."),
+        h("div.tiles", {}, MASK_SHAPES.map(([k, n]) => h("button" + ((m ? m.shape : "none") === k ? ".on" : ""), { onclick: () => setShape(k) }, n))),
+        ...(m ? [m.shape !== "line" && m.shape !== "band" ? msl("Ширина", "w", 0.05, 1.5) : null, m.shape !== "line" ? msl("Высота", "h", 0.03, 1.5) : null,
+          m.shape === "rect" ? msl("Скругление углов", "round", 0, 1) : null,
+          msl("Поворот", "rot", -180, 180, (v) => Math.round(v) + "°", 1), msl("Растушёвка края", "feather", 0, 0.5),
+          h("button.check" + (m.invert ? ".on" : ""), { onclick: () => { begin(); c.mask.invert = !m.invert; renderPanel(); draw(); save(); } }, h("i", {}, m.invert ? icon("check", 14) : null), "Наоборот: закрыть то, что внутри")].filter(Boolean) : []));
     } else if (panel === "cloud") {
       const c = P.clouds.find((x) => x.id === cloudSel);
       const csl = (label, key, min, max, show) => slider(label, () => c[key] ?? CLOUD_DEFAULT[key], (v) => { c[key] = v; }, { min, max, def: CLOUD_DEFAULT[key], show });
@@ -726,13 +765,15 @@ export async function openEditor(P, onExit) {
   const ptrs = new Map(); let g0 = null;
   canvas.addEventListener("pointerdown", (e) => {
     const cl = panel === "cloud" && P.clouds.find((x) => x.id === cloudSel);
-    const mode = panel === "frame" ? "frame" : cl ? "cloud" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
+    const mk = panel === "mask" && target()?.mask;
+    const mode = panel === "frame" ? "frame" : mk ? "mask" : cl ? "cloud" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
     if (!mode) { if (ptrs.size === 0) toggle(); return; }
     const c = mode === "frame" ? target() : null; if (mode === "frame" && !c) return;
     canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e);
     if (mode === "frame" && ptrs.size === 1) begin();
     const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
     if (mode === "frame") g0 = { mode, c, fr: { ...(c.frame ||= { ...FRAME_DEFAULT }) }, x: ps[0].clientX, y: ps[0].clientY, d };
+    else if (mode === "mask") g0 = { mode: "cloud", cl: mk, s0: { x: mk.x ?? 0.5, y: mk.y ?? 0.5, w: mk.w ?? MASK_DEFAULT.w, h: mk.h ?? MASK_DEFAULT.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else if (mode === "cloud") g0 = { mode, cl, s0: { x: cl.x, y: cl.y, w: cl.w, h: cl.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else { const st = subApi.cur(); g0 = { mode, s0: { x: st.x, y: st.y, size: st.size }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
   });
@@ -775,7 +816,9 @@ export async function openEditor(P, onExit) {
   };
   document.addEventListener("keydown", onKey);
   function exit() {
-    pause(); alive = false; clearTimeout(saveT); ro.disconnect(); offMedia(); document.removeEventListener("keydown", onKey);
+    pause(); clearTimeout(saveT); clearTimeout(pushT); clearInterval(remoteTimer);
+    if (dirty && cloud.signedIn()) pushProject({ ...P, updated: Date.now() }).catch(() => {});
+    alive = false; ro.disconnect(); offMedia(); document.removeEventListener("keydown", onKey);
     for (const r of vids.values()) { r.v.src = ""; r.v.remove(); }
     P.updated = Date.now(); P.duration = total();
     db.put("projects", P).finally(onExit);
@@ -785,5 +828,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }
