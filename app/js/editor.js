@@ -70,13 +70,13 @@ export async function openEditor(P, onExit) {
     try {
       const r = await remoteNewer(P);
       if (!r || !alive) return;
-      if (dirty && !(await ask("В облаке новая версия проекта", "Её прислал чат «Монтаж» или другое устройство. Загрузить её? Ваши последние правки на этом устройстве заменятся.", "Загрузить", false))) return;
+      if (dirty && !(await ask("В облаке новая версия проекта", (r.by === "claude" ? "Её прислал чат «Монтаж»." : "Она сохранена с другого вашего устройства.") + " Загрузить её? Ваши последние правки на этом устройстве заменятся.", "Загрузить", false))) return;
       for (const k of Object.keys(P)) delete P[k];
       Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= [];
       dirty = false; undo.length = redo.length = 0; sel = null; cloudSel = null; subSel = []; subAll = true; subWord = null;
       await db.put("projects", P); titleBtn.textContent = P.name;
       pause(); await loadAll(); fit(); renderPanel(); syncBar(); seek(Math.min(t, total()));
-      toast("Проект обновлён: пришла новая версия из чата «Монтаж»", 4000);
+      toast(r.by === "claude" ? "Проект обновлён: чат «Монтаж» прислал новую версию" : "Проект обновлён с другого устройства", 4000);
     } catch {}
   }
   const remoteTimer = setInterval(checkRemote, 25000);

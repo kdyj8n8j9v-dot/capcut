@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Проекты монтажной программы в MEGA — мост между чатом Claude и приложением владельца.
 
-Приложение (https://kdyj8n8j9v-dot.github.io/capcut/) держит проекты в MEGA «<OUT>/.studio/projects/<id>.json».
-Всё, что сюда положено, появляется у владельца на главном экране («новое из чата „Монтаж“»), а открытый проект
-обновляется сам за полминуты. Правки владельца ложатся в тот же файл — их можно прочитать командой get.
+ГЛАВНОЕ ПРАВИЛО: ничего не класть и не забирать самому. Только когда владелец прямо сказал
+«загрузи в монтажную программу» (put / push) или «вытяни из монтажной программы» (get).
+Смысл моста — владелец правит монтаж в приложении сам, не тратя токены чата.
 
-    python3 scripts/project.py list                 проекты в облаке: id, название, кто менял последним, когда
-    python3 scripts/project.py get <id|название>    скачать проект (JSON в stdout) — посмотреть правки владельца
-    python3 scripts/project.py put <spec.json>      собрать проект из короткого описания и положить в облако
+Две папки в MEGA, чтобы никто никого не затирал:
+  <OUT>/.studio/from-chat/<id>.json  сюда кладёт чат; приложение только читает (не меняет и не удаляет)
+  <OUT>/.studio/projects/<id>.json   сюда приложение само сохраняет версию владельца; чат её только читает
+
+    python3 scripts/project.py list                 что лежит в обеих папках: id, название, чья версия, когда
+    python3 scripts/project.py get <id|название>    версия владельца из приложения (JSON в stdout); нет её — версия чата
+    python3 scripts/project.py put <spec.json>      собрать проект из короткого описания и положить владельцу
     python3 scripts/project.py push <project.json>  положить готовый проект как есть (после get и правки)
 
+Положенный проект появляется у владельца на главном экране («новое из чата „Монтаж“»); открытый — обновляется
+примерно за полминуты (приложение спросит, если владелец в это время правил сам).
 Короткое описание (spec) — см. docs/PROJECT-FORMAT.md. Нужны MEGAcmd и вход (MEGA_EMAIL / MEGA_PASSWORD в окружении):
 вход делает «bash scripts/cloud.sh status». Имена роликов и текст речи в журнал не печатаются.
 """
@@ -26,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONF = dict(l.strip().split("=", 1) for l in (ROOT / "cloud.conf").read_text().splitlines() if "=" in l and not l.startswith("#"))
 IN, OUT = CONF["IN"].strip('"'), CONF["OUT"].strip('"')
-STUDIO, PROJECTS = f"{OUT}/.studio", f"{OUT}/.studio/projects"
+STUDIO, PROJECTS, INBOX = f"{OUT}/.studio", f"{OUT}/.studio/projects", f"{OUT}/.studio/from-chat"
 FORMATS = {"9:16", "16:9", "1:1", "4:5"}
 
 
@@ -53,16 +59,18 @@ def fetch(remote, suffix=""):
 
 
 def remote_projects():
+    """Проекты из обеих папок; у каждого поле _src: «владелец» (папка приложения) или «чат»."""
     out = []
-    for line in sh("mega-ls", PROJECTS, check=False).splitlines():
-        name = line.strip()
-        if name.endswith(".json"):
-            f = fetch(f"{PROJECTS}/{name}")
-            if f:
-                try:
-                    out.append(json.loads(f.read_text()))
-                except ValueError:
-                    pass
+    for folder, src in ((PROJECTS, "владелец"), (INBOX, "чат")):
+        for line in sh("mega-ls", folder, check=False).splitlines():
+            name = line.strip()
+            if name.endswith(".json"):
+                f = fetch(f"{folder}/{name}")
+                if f:
+                    try:
+                        out.append({**json.loads(f.read_text()), "_src": src})
+                    except ValueError:
+                        pass
     return out
 
 
@@ -71,7 +79,8 @@ def find(query):
     q = unicodedata.normalize("NFC", query).casefold()
     hit = [p for p in ps if p.get("id") == query] or [p for p in ps if unicodedata.normalize("NFC", p.get("name", "")).casefold() == q] \
         or [p for p in ps if q in unicodedata.normalize("NFC", p.get("name", "")).casefold()]
-    return max(hit, key=lambda p: p.get("updated", 0)) if hit else None
+    # версия владельца важнее версии чата: «вытяни из монтажной программы» = то, что он сделал сам
+    return max(hit, key=lambda p: (p["_src"] == "владелец", p.get("updated", 0))) if hit else None
 
 
 def probe(path):
@@ -137,9 +146,11 @@ def upload(p):
     p["by"] = "claude"
     d = Path(tempfile.mkdtemp()) / f"{p['id']}.json"
     d.write_text(json.dumps(p, ensure_ascii=False))
-    subprocess.run(["mega-mkdir", "-p", PROJECTS], capture_output=True)
-    subprocess.run(["mega-rm", "-f", f"{PROJECTS}/{d.name}"], capture_output=True)
-    subprocess.run(["mega-put", str(d), PROJECTS + "/"], capture_output=True, check=True)
+    p.pop("_src", None)
+    d.write_text(json.dumps(p, ensure_ascii=False))
+    subprocess.run(["mega-mkdir", "-p", INBOX], capture_output=True)
+    subprocess.run(["mega-rm", "-f", f"{INBOX}/{d.name}"], capture_output=True)
+    subprocess.run(["mega-put", str(d), INBOX + "/"], capture_output=True, check=True)
     print(f"проект {p['id']} в облаке: клипов {len(p['clips'])}, длительность {p.get('duration', 0)} с — появится в приложении за полминуты")
 
 
@@ -151,13 +162,14 @@ def main():
     login()
     if cmd == "list":
         for p in sorted(remote_projects(), key=lambda p: -p.get("updated", 0)):
-            who = "владелец (приложение)" if p.get("by") == "app" else "чат"
+            who = "версия владельца (приложение)" if p["_src"] == "владелец" else "версия чата"
             print(f"{p['id']}\t{p.get('name', '')}\t{who}\t{time.strftime('%Y-%m-%d %H:%M', time.localtime(p.get('updated', 0) / 1000))}")
     elif cmd == "get":
         p = find(sys.argv[2])
         if not p:
             sys.exit("такого проекта в облаке нет")
         p.pop("thumb", None)
+        print(f"# {'версия владельца из приложения' if p.pop('_src') == 'владелец' else 'версия чата (владелец её в приложении не сохранял)'}", file=sys.stderr)
         print(json.dumps(p, ensure_ascii=False, indent=1))
     elif cmd == "put":
         upload(build(json.loads(Path(sys.argv[2]).read_text())))

@@ -302,11 +302,11 @@ async function run(label, viewport, scale) {
   // проект в облаке: уходит сам, новая версия «из чата» подтягивается
   await ed(() => window.__ed.push()); await page.waitForTimeout(300);
   const pid = await ed(() => window.__ed.P.id);
-  ok(await page.evaluate((id) => !!window.__fakeFiles["10 бит/.studio/projects/" + id + ".json"], pid), "проект сам сохраняется в MEGA (общий с чатом «Монтаж»)");
-  await page.evaluate(async (id) => { const k = "10 бит/.studio/projects/" + id + ".json", p = JSON.parse(await window.__fakeFiles[k].text()); p.name = "Правка из чата"; p.by = "claude"; p.updated = Date.now() + 5000; p.grade.contrast = 0.33; await window.__fakeCloud.putText("10 бит/.studio/projects", id + ".json", JSON.stringify(p)); }, pid);
+  ok(await page.evaluate((id) => !!window.__fakeFiles["10 бит/.studio/projects/" + id + ".json"], pid), "версия владельца сама сохраняется в MEGA, в папку приложения");
+  await page.evaluate(async (id) => { const k = "10 бит/.studio/projects/" + id + ".json", p = JSON.parse(await window.__fakeFiles[k].text()); p.name = "Правка из чата"; p.by = "claude"; p.updated = Date.now() + 5000; p.grade.contrast = 0.33; await window.__fakeCloud.putText("10 бит/.studio/from-chat", id + ".json", JSON.stringify(p)); }, pid);
   await ed(() => window.__ed.checkRemote()); await page.waitForTimeout(400);
   ok(await ed(() => window.__ed.P.name) === "Правка из чата" && await ed(() => window.__ed.P.grade.contrast) === 0.33 && (await page.locator(".bar .title").textContent()) === "Правка из чата", "открытый проект обновился версией из чата");
-  await page.evaluate(() => window.__fakeCloud.putText("10 бит/.studio/projects", "mchat1.json", JSON.stringify({ id: "mchat1", name: "Ролик от Claude", by: "claude", created: 1, updated: Date.now(), format: "9:16", clips: [], media: {}, grade: {}, volume: 1, words: {}, clouds: [] })));
+  await page.evaluate(() => window.__fakeCloud.putText("10 бит/.studio/from-chat", "mchat1.json", JSON.stringify({ id: "mchat1", name: "Ролик от Claude", by: "claude", created: 1, updated: Date.now(), format: "9:16", clips: [], media: {}, grade: {}, volume: 1, words: {}, clouds: [] })));
 
   // назад и снова открыть — проект сохранился
   await page.click(".bar .link");
@@ -314,7 +314,11 @@ async function run(label, viewport, scale) {
   await page.waitForSelector(".newtag", { timeout: 10000 });
   ok((await page.locator(".card >> text=Ролик от Claude").count()) === 1, "проект, положенный чатом, появился на главном экране с пометкой");
   await shot("14-home-projects");
-  await page.reload(); await page.waitForSelector(".card:not(.new)");
+  // удаление в приложении не трогает файл чата, и проект сам не возвращается
+  await page.locator(".card", { hasText: "Ролик от Claude" }).locator(".del").click(); await page.click(".sheet .btn.danger"); await page.waitForTimeout(400);
+  ok(await page.evaluate(() => !!window.__fakeFiles["10 бит/.studio/from-chat/mchat1.json"]) && !(await page.locator(".card >> text=Ролик от Claude").count()), "удаление проекта в приложении не удаляет файл чата");
+  await page.reload(); await page.waitForSelector(".card:not(.new)"); await page.waitForTimeout(1200);
+  ok(!(await page.locator(".card >> text=Ролик от Claude").count()), "удалённый проект сам не возвращается из облака");
   await page.click(".card >> text=Правка из чата");
   await page.waitForFunction(() => window.__ed && window.__ed.P.clips.length === 2);
   await page.waitForFunction(() => { const c = document.querySelector(".view canvas"), g = c.getContext("webgl"), b = new Uint8Array(4); g.readPixels(c.width >> 1, c.height >> 1, 1, 1, g.RGBA, g.UNSIGNED_BYTE, b); return b[0] + b[1] + b[2] > 30; });

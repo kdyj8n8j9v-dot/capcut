@@ -1,7 +1,7 @@
 // MEGA прямо из браузера (библиотека megajs). Вход хранится только на устройстве: ключ сеанса, без пароля.
 import { settings } from "./store.js";
 
-export const PATHS = { in: "Исходники", out: "10 бит", studio: "10 бит/.studio", jobs: "10 бит/.studio/jobs", projects: "10 бит/.studio/projects", pack: "Для монтажа ПАК" };
+export const PATHS = { in: "Исходники", out: "10 бит", studio: "10 бит/.studio", jobs: "10 бит/.studio/jobs", projects: "10 бит/.studio/projects", inbox: "10 бит/.studio/from-chat", pack: "Для монтажа ПАК" };
 const norm = (s) => (s || "").normalize("NFC");
 let st = null, opening = null;
 const lib = () => import("../vendor/mega.mjs");

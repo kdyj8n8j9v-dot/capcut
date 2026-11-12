@@ -21,7 +21,7 @@ async function home(pull = true) {
   };
   const del = async (p, e) => {
     e.stopPropagation();
-    if (await ask("Удалить проект?", `«${p.name}» исчезнет с этого устройства. Видео в MEGA останутся.`)) { await db.del("projects", p.id); removeProject(p.id); home(false); }
+    if (await ask("Удалить проект?", `«${p.name}» исчезнет из приложения. Видео в MEGA и версия в чате «Монтаж» останутся.`)) { await db.del("projects", p.id); removeProject(p.id); home(false); }
   };
   root.replaceChildren(h("div.home", {},
     h("header.home-head", {}, h("h1", {}, "Проекты"), h("button.round", { onclick: openSettings, "aria-label": "Настройки" }, icon("gear", 22))),
