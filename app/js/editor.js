@@ -415,8 +415,13 @@ export async function openEditor(P, onExit) {
         const ahead = clamp((now - rec.mw) / 1000, 0, 0.05) * v.playbackRate;
         est = outAt(c, Math.min(rec.mt + ahead, c.out));
       } else est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.05) : 0);
-      // плавно: не назад, не быстрее чем вдвое за кадр экрана (догнать), не дальше видео
-      local = prev + clamp(est - prev, 0, step * 2);
+      // плавные часы: каждый кадр экрана время идёт на столько, сколько прошло (с учётом скорости видео и кривой),
+      // а по отметке показанного кадра лишь мягко подправляется (≤60 % шага) — не стоит и не уходит от картинки.
+      // (раньше «догоняли» отметку: новый кадр приходил с отметкой ≈ прошлой оценке, и время стояло — замер iPad: 7–14 раз/с)
+      const nominal = step * v.playbackRate / Math.max(0.05, rateAt(c, prev)), err = est - prev;
+      if (!moving) local = prev + Math.max(0, err);                  // видео стоит (догрузка) — ждём его
+      else if (err > 0.25) local = est;                              // сильно позади видео (после старта) — сразу к нему
+      else local = prev + Math.max(0, nominal + clamp(err * 0.15, -0.6 * nominal, 0.6 * nominal));
       if (v.paused && !v.ended && !v.seeking && now - (rec.playT || 0) > 300) { rec.playT = now; v.play().catch(() => {}); }
     } else local = prev + step;   // нет копии — чёрный кадр, время идёт по часам
     // страховка: если декодер не успевает за звуком (кадр отстаёт больше 0,3 с исходника дольше 1,2 с) — до конца
