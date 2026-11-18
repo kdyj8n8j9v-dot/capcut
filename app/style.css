@@ -299,3 +299,8 @@ textarea.txt { font-size: 17px; }
   .tool { font-size: 10px; min-width: 42px; } .tools { padding-left: 2px; padding-right: 2px; }
 }
 @media (max-height: 520px) { .panel { height: 170px; } }
+/* строка действий выбранного клипа: «Назад» отделена, «Удалить» — красным */
+.clipbar { background: var(--s2); }
+.clipbar .tool[data-tool=back] { border-right: 1px solid var(--line); border-radius: 0; color: var(--muted); }
+.clipbar .tool[data-tool=c-delete] { color: var(--danger); }
+@media (max-width: 480px) { .clipbar .tool { flex: 0 0 auto; padding: 0 7px; } }

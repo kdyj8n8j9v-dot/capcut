@@ -21,6 +21,12 @@ async function run(label, viewport, scale) {
   await page.goto(URL0);
   const shot = async (n) => (await page.waitForTimeout(350), page.screenshot({ path: `${shots}/${label}-${n}.png` }));
   const ed = (f) => page.evaluate(f);
+  // нажать кнопку нижней строки; если её нет в видимой строке (выбран клип) — сперва «Назад»
+  const tool = async (id) => {
+    const vis = page.locator(`nav.tools:not([hidden]) [data-tool=${id}]`);
+    if (!(await vis.count())) await page.click(await page.locator("nav.clipbar[hidden]").count() ? "nav.tools [data-tool=clip]" : "nav.clipbar [data-tool=back]");
+    await page.click(`nav.tools:not([hidden]) [data-tool=${id}]`);
+  };
   await page.waitForSelector(".home");
   ok(await page.locator(".setup").isVisible(), "главный экран зовёт подключить MEGA и GitHub");
   await shot("1-home");
@@ -100,7 +106,7 @@ async function run(label, viewport, scale) {
   await ed(() => window.__ed.seek(1));
   await page.waitForTimeout(300);
   const p0 = await px();
-  await page.click('[data-tool=color]');
+  await tool("color");
   await page.waitForSelector(".looks button img[src^='data:']", { timeout: 8000 });
   ok(await page.locator(".looks button").count() >= 12, "пресеты цвета с превью на своём кадре");
   await page.click(".looks button[data-look=cinema]"); await page.waitForTimeout(150);
@@ -118,7 +124,7 @@ async function run(label, viewport, scale) {
   await page.click(".panel .seg >> text=Оттенки"); await page.waitForSelector(".bands");
   await page.click(".panel .seg >> text=Детали");
   await page.locator('input[aria-label="Чёткость"]').fill("0.6"); await page.locator('input[aria-label="Резкость"]').fill("0.5");
-  await page.click('[data-tool=frame]');
+  await tool("clip"); await tool("frame");
   await page.locator('input[aria-label="Размер"]').fill("1.6"); await page.locator('input[aria-label="Поворот"]').fill("12");
   await page.waitForTimeout(100);
   ok((await ed(() => window.__ed.P.clips[0].frame?.scale)) === 1.6, "кадр: размер и поворот записаны в клип");
@@ -127,7 +133,7 @@ async function run(label, viewport, scale) {
   await shot("9-fit");
   await page.click(".panel-head >> text=Готово");
   // маска
-  await page.click('[data-tool=mask]'); await page.click(".tiles >> text=Круг");
+  await tool("mask"); await page.click(".tiles >> text=Круг");
   await page.locator('input[aria-label="Растушёвка края"]').fill("0.2");
   const corner = () => page.evaluate(() => { const c = document.querySelector("canvas.over"); return [...c.getContext("2d").getImageData(3, 3, 1, 1).data, ...c.getContext("2d").getImageData(c.width >> 1, c.height >> 1, 1, 1).data]; });
   const mk = await corner();
@@ -137,7 +143,7 @@ async function run(label, viewport, scale) {
   // скорость клипа
   const T0 = await ed(() => window.__ed.total()), L0 = await ed(() => { const c = window.__ed.P.clips[0]; return c.out - c.in; });
   await ed(() => window.__ed.seek(0.2));
-  await page.click('[data-tool=speed]'); await page.click(".panel .tiles >> text=2×");
+  await tool("speed"); await page.click(".panel .tiles >> text=2×");
   ok(Math.abs(await ed(() => window.__ed.total()) - (T0 - L0 / 2)) < 0.02 && await ed(() => window.__ed.P.clips[0].speed) === 2, "скорость 2×: клип стал вдвое короче на таймлайне");
   await shot("9b-speed");
   await page.click(".panel .seg >> text=Кривая"); await page.click(".tiles.curves >> text=Герой");
@@ -152,6 +158,17 @@ async function run(label, viewport, scale) {
   await page.click(".panel .tiles >> text=1×");
   ok(Math.abs(await ed(() => window.__ed.total()) - T0) < 0.02 && !(await ed(() => window.__ed.P.clips[0].speed)), "скорость возвращается к 1×");
   await page.click(".panel-head >> text=Готово");
+  // нажали на клип — внизу его действия
+  await page.evaluate(() => document.querySelector(".tl-ruler").click());
+  await page.locator(".tl-track .clip").nth(1).click();
+  ok(await page.locator("nav.clipbar:not([hidden])").count() === 1 && !!(await ed(() => window.__ed.sel)), "нажатие на клип открывает строку его действий");
+  await shot("9d-clipbar");
+  const nC = await ed(() => window.__ed.P.clips.length);
+  await page.click("nav.clipbar [data-tool=c-dup]");
+  ok(await ed(() => window.__ed.P.clips.length) === nC + 1, "«Копия» клипа");
+  await page.click('[aria-label="Отменить"]');
+  if (await page.locator("nav.clipbar:not([hidden])").count()) await page.click("nav.clipbar [data-tool=back]");
+  ok(await page.locator("nav.clipbar[hidden]").count() === 1, "«Назад» возвращает общую строку");
   // переход на стыке клипов
   await page.evaluate(() => document.querySelector(".tl-ruler").click());   // снять выделение клипа
   await page.click(".trb");
@@ -163,7 +180,7 @@ async function run(label, viewport, scale) {
   await page.click(".panel-head >> text=Готово");
 
   // субтитры
-  await page.click('[data-tool=subs]');
+  await tool("subs");
   await page.click("text=Создать субтитры");
   await page.waitForFunction(() => window.__ed.lines.length > 0);
   const nl = await ed(() => window.__ed.lines.length);
@@ -276,7 +293,7 @@ async function run(label, viewport, scale) {
   ok(await ed(() => window.__ed.subApi.scope()) === "all", "галочка возвращает режим «все субтитры»");
   ok(await page.locator(".sub i.ain").count() > 0, "на плашках субтитров видна длительность анимации");
   // облако — отдельный объект на своей дорожке
-  await page.click('[data-tool=cloud]'); await page.click("text=Добавить облако здесь");
+  await tool("cloud"); await page.click("text=Добавить облако здесь");
   ok(await ed(() => window.__ed.P.clouds.length) === 1 && await page.locator(".cl.sel").count() === 1, "облако добавляется и появляется на своей дорожке");
   await page.locator('input[aria-label="Плотность"]').fill("0.8"); await page.locator('input[aria-label="Ширина"]').fill("1.1");
   const c0 = await ed(() => ({ ...window.__ed.P.clouds[0] }));
@@ -295,7 +312,7 @@ async function run(label, viewport, scale) {
   await page.click(".guide-btn");
   ok(!(await page.locator(".guides").isVisible()), "и выключается той же кнопкой");
   // наложения: стикер из ПАК и видео поверх основного
-  await page.click('[data-tool=overlay]'); await page.click("text=Добавить наложение здесь");
+  await tool("overlay"); await page.click("text=Добавить наложение здесь");
   await page.click(".sheet .item >> text=Звезда.png");
   await page.waitForFunction(() => window.__ed.P.overlays.length === 1 && document.querySelector(".ov.sel"));
   const ov0 = await ed(() => window.__ed.P.overlays[0]);
@@ -325,7 +342,7 @@ async function run(label, viewport, scale) {
   ok(await ed(() => window.__ed.P.overlays.length) === 1, "наложение удаляется");
   // титры: свой текст поверх видео
   await page.click('.panel-head >> text=Готово');
-  await page.click('[data-tool=text]'); await page.click("text=Добавить текст здесь");
+  await tool("text"); await page.click("text=Добавить текст здесь");
   await page.waitForFunction(() => window.__ed.P.texts.length === 1 && document.querySelector(".tx.sel"));
   await page.fill("textarea.txt", "ЗАГОЛОВОК\nвторая строка");
   const tx0 = await ed(() => window.__ed.P.texts[0]);
@@ -345,7 +362,7 @@ async function run(label, viewport, scale) {
   // музыка и звуки
   await page.click('.panel-head >> text=Готово');
   await ed(() => window.__ed.seek(0));
-  await page.click('[data-tool=sound]'); await page.click("text=Добавить музыку или звук здесь");
+  await tool("sound"); await page.click("text=Добавить музыку или звук здесь");
   await page.click(".sheet .item.snd >> text=Добавить");
   await page.waitForFunction(() => window.__ed.P.sounds.length === 1 && document.querySelector(".sn.sel"));
   ok(true, "музыка из «Для монтажа ПАК» встала на свою дорожку");
@@ -378,7 +395,7 @@ async function run(label, viewport, scale) {
   await shot("10-editor");
 
   // подготовка второго файла закончилась?
-  await page.click('[data-tool=media]');
+  await tool("media");
   await page.waitForSelector(".lib .item >> text=Съёмка 2.mov");
   await page.waitForFunction(() => [...document.querySelectorAll(".lib .item")].some((i) => i.textContent.includes("Съёмка 2") && i.textContent.includes("на устройстве")), null, { timeout: 60000 });
   ok(true, "файл без копии: сборщик подготовил, копия скачалась");

@@ -50,7 +50,8 @@ export async function openEditor(P, onExit) {
     }
     return null;
   }
-  const target = () => locate(t)?.clip || null;   // кадр меняем у того клипа, который сейчас на экране
+  // кадр, скорость, маску меняем у выбранного клипа, а если ничего не выбрано — у того, что сейчас на экране
+  const target = () => (sel && P.clips.find((c) => c.id === sel)) || locate(t)?.clip || null;
   let shown = null;
 
   // ——— история и сохранение
@@ -113,10 +114,16 @@ export async function openEditor(P, onExit) {
   const undoBtn = h("button.round", { onclick: () => restore(undo, redo), "aria-label": "Отменить" }, icon("undo", 20));
   const redoBtn = h("button.round", { onclick: () => restore(redo, undo), "aria-label": "Вернуть" }, icon("redo", 20));
   const tool = (id, ic, label, fn) => h("button.tool", { "data-tool": id, onclick: fn }, icon(ic), h("span", {}, label));
+  // нижняя строка как в CapCut: без выбора — что добавить в ролик; выбран клип — всё, что можно сделать с ним
   const tools = h("nav.tools", {},
-    tool("media", "plus", "Медиа", addMedia), tool("quick", "magic", "Быстро", () => openPanel("quick")), tool("text", "type", "Текст", () => openPanel("text")), tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("overlay", "layers", "Наложение", () => openPanel("overlay")),
-    tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("speed", "speed", "Скорость", () => openPanel("speed")), tool("mask", "mask", "Маска", () => openPanel("mask")), tool("color", "color", "Цвет", () => openPanel("color")),
-    tool("cloud", "cloud", "Облако", () => openPanel("cloud")));
+    tool("quick", "magic", "Быстро", () => openPanel("quick")), tool("media", "plus", "Медиа", addMedia), tool("clip", "crop", "Клип", pickClip),
+    tool("text", "type", "Текст", () => openPanel("text")), tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("overlay", "layers", "Наложение", () => openPanel("overlay")),
+    tool("color", "color", "Цвет", () => openPanel("color")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")));
+  const clipBar = h("nav.tools.clipbar", { hidden: true },
+    tool("back", "back", "Назад", unselect), tool("c-split", "split", "Разрезать", split),
+    tool("speed", "speed", "Скорость", () => openPanel("speed")), tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("mask", "mask", "Маска", () => openPanel("mask")),
+    tool("transition", "transition", "Переход", clipTransition), tool("c-dup", "copy", "Копия", duplicate), tool("color", "color", "Цвет", () => openPanel("color")), tool("c-delete", "trash", "Удалить", remove));
+  const CLIP_PANELS = new Set(["frame", "speed", "mask", "transition"]);
   const acts = h("div.acts", {}, h("button.round.act", { "data-tool": "split", onclick: split, "aria-label": "Разрезать" }, icon("split", 20)), h("button.round.act.act-del", { "data-tool": "delete", onclick: remove, "aria-label": "Удалить" }, icon("trash", 18)));
   const ed = h("div.ed", {},
     h("header.bar", {},
@@ -127,18 +134,22 @@ export async function openEditor(P, onExit) {
       h("div.zoom", {}, acts, h("button.round", { onclick: () => zoom(1 / 1.5), "aria-label": "Мельче" }, icon("zoomout", 18)),
         h("button.round", { onclick: () => zoom(1.5), "aria-label": "Крупнее" }, icon("zoomin", 18)))),
     h("div.tl", {}, h("div.tl-grab", { title: "Потяните, чтобы изменить высоту дорожек" }), scroll, h("div.tl-head")),
-    tools);
+    tools, clipBar);
   root.replaceChildren(ed);
 
   function syncBar() {
     undoBtn.disabled = !undo.length; redoBtn.disabled = !redo.length;
     const none = !P.clips.length;
     empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = none;
-    for (const b of [...tools.children, ...acts.children]) {
+    const clipMode = !!sel && (!panel || CLIP_PANELS.has(panel) || panel === "color");
+    tools.hidden = clipMode; clipBar.hidden = !clipMode;
+    const bar = clipMode ? clipBar : tools;
+    for (const b of [...bar.children, ...acts.children]) {
       const id = b.dataset.tool;
+      if (bar === clipBar && id !== "delete") { b.disabled = false; b.classList.toggle("on", id === panel); continue; }
       b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel) && !(panel === "sound" && sndSel) && !(panel === "text" && txtSel);
       b.classList.toggle("on", id === panel);
-      if (id === panel && b.scrollIntoView && tools.scrollWidth > tools.clientWidth) b.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (id === panel && b.scrollIntoView && bar.scrollWidth > bar.clientWidth) b.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     tAll.textContent = fmtTime(total());
     tNow.textContent = fmtTime(t, true);
@@ -872,11 +883,10 @@ export async function openEditor(P, onExit) {
     if (drag || track.dataset.justDragged) return;
     const el = e.target.closest(".clip");
     if (!el) return;
-    sel = sel === el.dataset.id ? null : el.dataset.id;
-    layout();   // заново: у выделенного клипа края, значки переходов рядом прячутся
-    syncBar();
+    if (sel === el.dataset.id) return unselect();
+    selectClip(el.dataset.id);
   });
-  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow || e.target === sndRow || e.target === txtRow) { sel = null; layout(); } });
+  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow || e.target === sndRow || e.target === txtRow) { if (sel) unselect(); } });
   track.addEventListener("pointerdown", (e) => {
     const el = e.target.closest(".clip");
     if (!el || e.button > 0) return;
@@ -942,6 +952,36 @@ export async function openEditor(P, onExit) {
   track.addEventListener("pointerup", endDrag);
   track.addEventListener("pointercancel", endDrag);
   track.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // ——— выбор клипа: внизу появляются его действия, открытая панель клипа сразу показывает его
+  function selectClip(id) {
+    sel = id; trSel = null; pause();
+    const i = P.clips.findIndex((c) => c.id === id), a = startOf(i), b = a + len(P.clips[i]);
+    if (t < a || t >= b - 0.02) seek(a + Math.min(0.05, (b - a) / 2));   // линию — в начало клипа, чтобы видеть, что меняем
+    if (panel && !CLIP_PANELS.has(panel) && panel !== "color") panel = null;
+    if (panel === "transition") panel = null;
+    renderPanel(); layout(); syncBar(); requestAnimationFrame(fit);
+  }
+  function unselect() {
+    sel = null; trSel = null;
+    if (CLIP_PANELS.has(panel)) panel = null;
+    renderPanel(); layout(); syncBar(); requestAnimationFrame(fit);
+  }
+  function pickClip() { const c = locate(t)?.clip; if (c) selectClip(c.id); }
+  function clipTransition() {
+    let i = P.clips.findIndex((c) => c.id === sel);
+    if (P.clips.length < 2) return toast("Переход нужен между двумя клипами — добавьте ещё видео");
+    if (i === P.clips.length - 1) i--;   // у последнего клипа — стык слева
+    trSel = P.clips[i].id; pause(); seek(Math.max(0, startOf(i + 1) - 0.6));
+    panel = panel === "transition" ? null : "transition"; renderPanel(); syncBar(); layout(); requestAnimationFrame(fit);
+  }
+  function duplicate() {
+    const i = P.clips.findIndex((c) => c.id === sel); if (i < 0) return;
+    begin(); pause();
+    const c = P.clips[i], b = JSON.parse(JSON.stringify(c)); b.id = uid(); delete b.tr;
+    P.clips.splice(i + 1, 0, b); sel = b.id; layout(); seek(startOf(i + 1) + 0.05); save(); syncBar();
+    toast("Копия — сразу после клипа");
+  }
 
   // ——— действия
   function split() {
@@ -1380,5 +1420,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
 }
