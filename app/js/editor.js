@@ -310,7 +310,10 @@ export async function openEditor(P, onExit) {
     if (panel === "speed" && curveHook && side.querySelector("canvas.curve")) curveHook();
   }
   // скорость видео меняем, только если она заметно другая: частые смены на iPad останавливают картинку и звук
-  function setRate(v, r) { r = clamp(r, 0.0625, 16); if (Math.abs(v.playbackRate - r) > r * 0.04) try { v.playbackRate = r; } catch {} }
+  // меняем скорость, только если она разошлась с нужной больше чем на tol: каждая смена в Safari на миг останавливает
+  // видео и звук (замер на iPad: на кривой время стояло 19 раз в секунду, на 1× — 1 раз)
+  let rateN = 0;
+  function setRate(v, r, tol = 0.04) { r = clamp(r, 0.0625, 16); if (Math.abs(v.playbackRate - r) > r * tol) try { v.playbackRate = r; rateN++; } catch {} }
   // на паузе заранее готовим поток кадров с текущего места: по ▶ первый кадр уже декодирован
   let primeT = 0;
   function prime() {
@@ -370,9 +373,9 @@ export async function openEditor(P, onExit) {
   function hudTick(now, c, rec, fast) {
     if (!hs || now - hs.t0 > 1000) {
       if (hs) hud.textContent = `экран ${hs.n} к/с · видео ${hs.vf} к/с · время стояло ${hs.st} · отставание ${Math.round(hs.lag * 1000)} мс · ` +
-        `рисование ${(hs.dr / Math.max(1, hs.n)).toFixed(1).replace(".", ",")} мс · ${fast ? "WebCodecs" : "плеер"}${rec?.stream?.err ? " (WebCodecs, " + rec.stream.err + ")" : ""} · ` +
+        `рисование ${(hs.dr / Math.max(1, hs.n)).toFixed(1).replace(".", ",")} мс · смен скорости ${rateN - hs.r0} · ${fast ? "WebCodecs" : "плеер"}${rec?.stream?.err ? " (WebCodecs, " + rec.stream.err + ")" : ""} · ` +
         `${rec ? rec.w + "×" + rec.h : "нет видео"} · ${String(rateAt(c, t - startOf(pi)).toFixed(2)).replace(".", ",")}×`;
-      hs = { t0: now, n: 0, vf: 0, st: 0, lag: 0, dr: 0, lastT: t, lastF: null };
+      hs = { t0: now, n: 0, vf: 0, st: 0, lag: 0, dr: 0, r0: rateN, lastT: t, lastF: null };
     }
     hs.n++;
     const f = fast ? rec.stream.cur?.timestamp : rec?.frame;
@@ -395,7 +398,9 @@ export async function openEditor(P, onExit) {
     if (fast && !rec.stream.cur && !rec.stream.ready(srcAt(c, prev))) local = prev;   // декодер ещё не дал первый кадр — ждём
     else if (clk) {
       const v = clk, vt = v.currentTime;
-      if (now - (rec.rateT || 0) > 120) { rec.rateT = now; setRate(v, rateAt(c, prev)); }   // скорость меняем не чаще ~8 раз в секунду
+      // на кривой скорость меняем не чаще 3 раз в секунду и только при расхождении больше 12 %; таймлайн всё равно
+      // считается по точному месту в видео (outAt), так что субтитры не разъезжаются — чуть неточна лишь сама скорость
+      if (now - (rec.rateT || 0) > 330) { rec.rateT = now; setRate(v, rateAt(c, prev), 0.12); }
       if (vt !== rec.vt) { rec.vt = vt; rec.vWall = now; rec.vLocal = outAt(c, vt); }
       const moving = !v.paused && !v.seeking && v.readyState >= 3;
       const est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.12) : 0);   // досчёт между кадрами видео — до 0,12 с (на iPad время видео меняется рывками)
