@@ -287,6 +287,24 @@ async function run(label, viewport, scale) {
   ok(await ed(() => window.__ed.P.overlays[1].end) < oe0 - 0.1, "видео-наложение укорачивается за край");
   await page.click(".panel >> text=Удалить наложение");
   ok(await ed(() => window.__ed.P.overlays.length) === 1, "наложение удаляется");
+  // музыка и звуки
+  await page.click('.panel-head >> text=Готово');
+  await page.click('[data-tool=sound]'); await page.click("text=Добавить музыку или звук здесь");
+  await page.click(".sheet .item.snd >> text=Добавить");
+  await page.waitForFunction(() => window.__ed.P.sounds.length === 1 && document.querySelector(".sn.sel"));
+  ok(true, "музыка из «Для монтажа ПАК» встала на свою дорожку");
+  await page.locator('input[aria-label="Громкость"]').fill("0.4"); await page.locator('input[aria-label="Плавное начало"]').fill("0.5");
+  await page.click(".panel >> text=Приглушать, когда говорят");
+  const sx = await ed(() => window.__ed.P.sounds[0]);
+  ok(sx.volume === 0.4 && sx.fadeIn === 0.5 && sx.duck === true, "громкость, плавное начало и приглушение под голос настраиваются");
+  const grs = await page.locator(".sn.sel .g.r").boundingBox();
+  await page.mouse.move(grs.x + 5, grs.y + 10); await page.mouse.down(); await page.mouse.move(grs.x - 30, grs.y + 10, { steps: 4 }); await page.mouse.up();
+  ok(await ed(() => window.__ed.P.sounds[0].end) < sx.end - 0.1, "звук обрезается за край");
+  await ed(() => window.__ed.seek(window.__ed.P.sounds[0].start)); await page.click(".play"); await page.waitForTimeout(700);
+  ok(await ed(() => { const r = [...window.__ed.sndEls.values()][0]; return r && r.ok && !r.el.paused && r.el.currentTime > 0.15; }), "музыка играет вместе с видео в превью");
+  await page.click(".play"); await page.waitForTimeout(150);
+  ok(await ed(() => [...window.__ed.sndEls.values()][0].el.paused), "и останавливается вместе с ним");
+  await shot("7k-sound");
   await page.click(".panel-head >> text=Готово");
 
   // воспроизведение через склейку
@@ -325,6 +343,7 @@ async function run(label, viewport, scale) {
   ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.clouds?.length === 1 && job.subs.clouds[0].a === 0.8, "свои настройки строк и слов и облако ушли сборщику");
   ok(job.subs.lines.some((l) => l.style?.layer === 1), "слой субтитра ушёл сборщику");
   ok(job.overlays?.length === 1 && job.overlays[0].path === "Для монтажа ПАК/Стикеры/Звезда.png" && job.overlays[0].in === "pop" && !job.overlays[0].image, "наложение ушло сборщику (путь к картинке в MEGA)");
+  ok(job.sounds?.length === 1 && job.sounds[0].path === "Для монтажа ПАК/Музыка/Спокойная.webm" && job.sounds[0].volume === 0.4 && job.sounds[0].duck, "музыка ушла сборщику (путь в MEGA, громкость, приглушение)");
   ok(job.subs.masks?.length === 1 && job.subs.masks[0].shape === "ellipse" && job.subs.masks[0].start === 0, "маска клипа ушла сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');

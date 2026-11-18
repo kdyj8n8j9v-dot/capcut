@@ -12,6 +12,7 @@
     const cv = document.createElement("canvas"); cv.width = 300; cv.height = 200; const g = cv.getContext("2d");
     g.fillStyle = "#ff2d55"; g.beginPath(); g.ellipse(150, 100, 140, 90, 0, 0, 7); g.fill();
     files["Для монтажа ПАК/Стикеры/Звезда.png"] = await new Promise((r) => cv.toBlob(r, "image/png"));
+    files["Для монтажа ПАК/Музыка/Спокойная.webm"] = b;   // любой файл со звуком подходит для проверки
     files["Для монтажа ПАК/Шрифты/Мой шрифт.ttf"] = await fetch("/app/fonts/Caveat_700Bold.ttf").then((r) => r.blob());
     files["Для монтажа ПАК/Шрифты/Титры/Второй.otf"] = await fetch("/app/fonts/Oswald_600SemiBold.ttf").then((r) => r.blob());
     files["10 бит/.studio/Съёмка 1.transcript.json"] = new Blob([JSON.stringify({ words: "Привет, это проверка субтитров. Каждое слово стоит на своём месте, и текст можно править!".split(" ").map((x, i) => ({ text: x, start: 0.3 + i * 0.5, end: 0.3 + i * 0.5 + 0.4 })) })]);

@@ -2,13 +2,13 @@
 import { h, icon, sheet, toast, ask, askText, fmtTime, clamp } from "./ui.js";
 import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
-import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage } from "./media.js";
+import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage, audioUrl, ensureAudio } from "./media.js";
 import { drawOverlays, ovAt, OV_DEFAULT, OV_IN, OV_OUT, OV_LOOP } from "./overlays.mjs";
 import { buildLines, drawSubs, drawClouds, drawMask, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
 import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
-import { openLibrary, openOverlayPicker } from "./library.js";
+import { openLibrary, openOverlayPicker, openSoundPicker } from "./library.js";
 import { openExport } from "./export.js";
 import { pushProject, remoteNewer } from "./sync.js";
 
@@ -28,7 +28,7 @@ const GROUPS = [
 const BAND_COLORS = ["#ff453a", "#ff9f0a", "#ffd60a", "#30d158", "#40c8e0", "#0a84ff", "#bf5af2", "#ff375f"];
 
 export async function openEditor(P, onExit) {
-  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {};
+  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {};
   const root = document.getElementById("app");
   let t = 0, sel = null, pps = 40, playing = false, pi = 0, panel = null, alive = true, lastTick = 0;
   const undo = [], redo = [];
@@ -51,7 +51,7 @@ export async function openEditor(P, onExit) {
   let shown = null;
 
   // ——— история и сохранение
-  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds, overlays: P.overlays, images: P.images });
+  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds, overlays: P.overlays, images: P.images, sounds: P.sounds, audios: P.audios });
   let saveT;
   function save() {
     clearTimeout(saveT);
@@ -73,7 +73,7 @@ export async function openEditor(P, onExit) {
       if (!r || !alive) return;
       if (dirty && !(await ask("В облаке новая версия проекта", (r.by === "claude" ? "Её прислал чат «Монтаж»." : "Она сохранена с другого вашего устройства.") + " Загрузить её? Ваши последние правки на этом устройстве заменятся.", "Загрузить", false))) return;
       for (const k of Object.keys(P)) delete P[k];
-      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {};
+      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {};
       dirty = false; undo.length = redo.length = 0; sel = null; cloudSel = null; subSel = []; subAll = true; subWord = null;
       await db.put("projects", P); titleBtn.textContent = P.name;
       pause(); await loadAll(); fit(); renderPanel(); syncBar(); seek(Math.min(t, total()));
@@ -103,7 +103,7 @@ export async function openEditor(P, onExit) {
   const side = h("aside.panel", { hidden: true });
   const tNow = h("span.t-now", {}, "0:00,0"), tAll = h("span.t-all", {}, "0:00");
   const playBtn = h("button.round.play", { onclick: toggle, "aria-label": "Пуск" }, icon("play", 22));
-  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), cloudRow = h("div.tl-clouds"), ovRow = h("div.tl-ovs"), inner = h("div.tl-inner", {}, ruler, track, ovRow, subRow, cloudRow);
+  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), cloudRow = h("div.tl-clouds"), ovRow = h("div.tl-ovs"), sndRow = h("div.tl-snds"), inner = h("div.tl-inner", {}, ruler, track, ovRow, subRow, cloudRow, sndRow);
   scroll.append(inner);
   const titleBtn = h("button.title", { onclick: rename }, P.name);
   const fmtBtn = h("button.chip", { onclick: pickFormat, "aria-label": "Формат" }, P.format);
@@ -132,7 +132,7 @@ export async function openEditor(P, onExit) {
     empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = none;
     for (const b of tools.children) {
       const id = b.dataset.tool;
-      b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel);
+      b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel) && !(panel === "sound" && sndSel);
       b.classList.toggle("on", id === panel);
     }
     tAll.textContent = fmtTime(total());
@@ -190,7 +190,7 @@ export async function openEditor(P, onExit) {
   }
   async function loadAll() {
     await Promise.all(Object.keys(P.media).map(video));
-    P.overlays.forEach(loadOv);
+    P.overlays.forEach(loadOv); P.sounds.forEach(loadSnd);
     layout(); seek(t);
     restoreMissing();
   }
@@ -235,7 +235,7 @@ export async function openEditor(P, onExit) {
     }
     if (!fromScroll) scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
-    syncOv();
+    syncOv(); syncSnd();
     draw();
     if ((panel === "frame" || panel === "mask") && loc?.clip.id !== shown && !ptrs.size) renderPanel();
   }
@@ -251,10 +251,11 @@ export async function openEditor(P, onExit) {
     const rec = vids.get(loc.clip.media);
     if (rec) { rec.unlocked = true; rec.v.play().catch(() => {}); }
     for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
-    syncOv();
+    for (const a of sndEls.values()) if (a.el && !a.unlocked) { a.unlocked = true; const p = a.el.play(); p && p.then(() => syncSnd()).catch(() => {}); }
+    syncOv(); syncSnd();
     syncBar(); requestAnimationFrame(tick);
   }
-  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncOv(); syncBar(); }
+  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncOv(); syncSnd(); syncBar(); }
   function toggle() { playing ? pause() : play(); }
   function tick(now) {
     if (!playing || !alive) return;
@@ -272,7 +273,7 @@ export async function openEditor(P, onExit) {
     } else t = startOf(pi) + Math.max(0, local);
     scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
-    syncOv();
+    syncOv(); syncSnd();
     draw();
     if (stopAt != null && t >= stopAt) return pause();
     requestAnimationFrame(tick);
@@ -309,7 +310,7 @@ export async function openEditor(P, onExit) {
     const tlEl = ed.querySelector(".tl"), narrow = innerWidth < 820;
     // на телефоне с открытой панелью превью важнее: таймлайн низкий и прокручивается
     const cap = narrow && panel ? 104 : Math.round(innerHeight * (narrow ? 0.3 : 0.45));
-    const rows = ruler.offsetHeight + track.offsetHeight + (subRow.hidden ? 0 : subRow.offsetHeight + 3) + (cloudRow.hidden ? 0 : cloudRow.offsetHeight + 3) + (ovRow.hidden ? 0 : ovRow.offsetHeight + 3);
+    const rows = ruler.offsetHeight + track.offsetHeight + (subRow.hidden ? 0 : subRow.offsetHeight + 3) + (cloudRow.hidden ? 0 : cloudRow.offsetHeight + 3) + (ovRow.hidden ? 0 : ovRow.offsetHeight + 3) + (sndRow.hidden ? 0 : sndRow.offsetHeight + 3);
     const want = Math.min(cap, settings.get("tlh") || Math.max(112, rows + 30));
     if (Math.abs(tlEl.offsetHeight - want) > 2) tlEl.style.height = want + "px";
   }
@@ -429,6 +430,89 @@ export async function openEditor(P, onExit) {
   });
   const odragEnd = (e) => { if (!odrag || e.pointerId !== odrag.id) return; const m = odrag.moved; odrag = null; if (m) { ovRow.dataset.drag = "1"; setTimeout(() => delete ovRow.dataset.drag, 60); layoutOvs(); syncOv(); draw(); save(); } };
   ovRow.addEventListener("pointerup", odragEnd); ovRow.addEventListener("pointercancel", odragEnd);
+
+  // ——— музыка и звуки: своя дорожка внизу; в превью играют вместе с видео, в готовом видео — смешиваются сборщиком
+  let sndSel = null, sdragS = null;
+  const sndEls = new Map();
+  async function loadSnd(x) {
+    if (sndEls.has(x.id)) return;
+    const r = { el: null, ok: false }; sndEls.set(x.id, r);
+    try {
+      const url = (await audioUrl(x.audio)) || (await ensureAudio(x.audio, P.audios[x.audio]));
+      if (!url) throw 0;
+      const a = new Audio(); a.preload = "auto"; a.src = url; r.el = a;
+      a.addEventListener("loadedmetadata", () => { r.ok = true; syncSnd(); });
+    } catch { sndEls.delete(x.id); }
+  }
+  // громкость звука в момент t: своя громкость, плавные начало и конец, приглушение под голос (если есть субтитры)
+  function sndGain(x) {
+    let g = x.mute ? 0 : x.volume ?? 1;
+    const fi = x.fadeIn || 0, fo = x.fadeOut || 0;
+    if (fi > 0) g *= clamp((t - x.start) / fi, 0, 1);
+    if (fo > 0) g *= clamp((x.end - t) / fo, 0, 1);
+    if (x.duck && lines.some((l) => t >= l.start && t < l.end - 0.3)) g *= 0.3;
+    return clamp(g, 0, 1);
+  }
+  function syncSnd() {
+    for (const x of P.sounds) {
+      const r = sndEls.get(x.id); if (!r || !r.ok) continue;
+      const a = r.el, on = t >= x.start && t < x.end, want = (x.from || 0) + (t - x.start);
+      if (!on || !playing) { if (!a.paused) a.pause(); if (on && Math.abs(a.currentTime - want) > 0.05) a.currentTime = want; continue; }
+      a.volume = sndGain(x);
+      if (a.paused) { a.currentTime = want; a.play().catch(() => {}); } else if (Math.abs(a.currentTime - want) > 0.25) a.currentTime = want;
+    }
+  }
+  const freeSndLayer = (s, e) => { for (let n = 0; ; n++) if (!P.sounds.some((x) => (x.layer | 0) === n && x.start < e && x.end > s)) return n; };
+  function addSound(rec) {
+    begin(); pause();
+    P.audios[rec.key] = { name: rec.name, dur: rec.dur, path: rec.path };
+    const tot = total(), start = Math.max(0, Math.min(t, tot - 0.3)), end = Math.min(tot, start + rec.dur);
+    const music = rec.dur > 20, x = { id: uid(), audio: rec.key, from: 0, start, end, volume: music ? 0.35 : 1, fadeIn: music ? 1 : 0, fadeOut: music ? 1.5 : 0, duck: music };
+    x.layer = freeSndLayer(start, end);
+    P.sounds.push(x); sndSel = x.id; loadSnd(x);
+    if (panel !== "sound") { panel = "sound"; requestAnimationFrame(fit); }
+    layoutSnds(); renderPanel(); syncBar(); save();
+  }
+  function removeSound() { begin(); const r = sndEls.get(sndSel); if (r && r.el) { r.el.pause(); r.el.src = ""; } sndEls.delete(sndSel); P.sounds = P.sounds.filter((x) => x.id !== sndSel); sndSel = null; layoutSnds(); renderPanel(); syncBar(); save(); }
+  const sndName = (x) => P.audios[x.audio]?.name || "Звук";
+  function layoutSnds() {
+    sndRow.style.width = total() * pps + "px"; sndRow.hidden = !P.sounds.length;
+    const n = Math.max(0, ...P.sounds.map((x) => (x.layer | 0) + 1));
+    sndRow.replaceChildren(...Array.from({ length: n }, (_, k) => h("div.orow", {}, P.sounds.filter((x) => (x.layer | 0) === k).map((x) => {
+      const len = x.end - x.start, fi = Math.min(len, x.fadeIn || 0), fo = Math.min(len, x.fadeOut || 0);
+      return h("div.sn" + (x.id === sndSel ? ".sel" : "") + (x.duck ? ".duck" : ""), { "data-id": x.id, style: { left: x.start * pps + "px", width: Math.max(8, len * pps - 2) + "px" } },
+        fi > 0 ? h("i.fin", { style: { width: fi * pps + "px" } }) : null, fo > 0 ? h("i.fout", { style: { width: fo * pps + "px" } }) : null,
+        h("span", {}, icon("sound", 12), sndName(x) + (x.volume != null && x.volume !== 1 ? ` · ${Math.round(x.volume * 100)} %` : "")),
+        h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }));
+    }))));
+    autoTl(); reveal(sndRow.querySelector(".sn.sel"));
+  }
+  function selectSound(id) {
+    sndSel = id; pause();
+    const x = P.sounds.find((y) => y.id === id);
+    if (x && (t < x.start || t >= x.end)) seek(x.start);
+    if (panel !== "sound") { panel = "sound"; requestAnimationFrame(fit); }
+    layoutSnds(); renderPanel(); syncBar();
+  }
+  sndRow.addEventListener("click", (e) => { const el = e.target.closest(".sn"); if (!el || sndRow.dataset.drag) return; e.stopPropagation(); selectSound(el.dataset.id); });
+  sndRow.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".sn.sel"); if (!el || e.button > 0) return;
+    const x = P.sounds.find((y) => y.id === el.dataset.id);
+    e.preventDefault(); pause();
+    sdragS = { x, el, side: e.target.dataset.side || "m", px: e.clientX, s0: x.start, e0: x.end, f0: x.from || 0, id: e.pointerId, moved: false };
+    sndRow.setPointerCapture(e.pointerId);
+  });
+  sndRow.addEventListener("pointermove", (e) => {
+    const g = sdragS; if (!g || e.pointerId !== g.id) return;
+    const d = (e.clientX - g.px) / pps, x = g.x, tot = total(), len = g.e0 - g.s0, dur = P.audios[x.audio]?.dur || 1e9;
+    if (!g.moved) { if (Math.abs(e.clientX - g.px) < 4) return; g.moved = true; begin(); }
+    if (g.side === "l") { x.start = clamp(g.s0 + d, Math.max(0, g.s0 - g.f0), x.end - 0.1); x.from = g.f0 + (x.start - g.s0); }
+    else if (g.side === "r") x.end = clamp(g.e0 + d, x.start + 0.1, Math.min(tot, x.start + dur - (x.from || 0)));
+    else { x.start = clamp(g.s0 + d, 0, Math.max(0, tot - len)); x.end = x.start + len; }
+    g.el.style.left = x.start * pps + "px"; g.el.style.width = Math.max(8, (x.end - x.start) * pps - 2) + "px";
+  });
+  const sdragSEnd = (e) => { if (!sdragS || e.pointerId !== sdragS.id) return; const m = sdragS.moved; sdragS = null; if (m) { sndRow.dataset.drag = "1"; setTimeout(() => delete sndRow.dataset.drag, 60); layoutSnds(); renderPanel(); save(); } };
+  sndRow.addEventListener("pointerup", sdragSEnd); sndRow.addEventListener("pointercancel", sdragSEnd);
 
   // ——— облака: отдельные объекты на своей дорожке
   let cloudSel = null, cdrag = null;
@@ -626,7 +710,7 @@ export async function openEditor(P, onExit) {
     const marks = [];
     for (let s = 0; s <= tot + 1e-6; s += step) marks.push(h("span", { style: { left: s * pps + "px" } }, step < 1 ? fmtTime(s, true) : fmtTime(s)));
     ruler.replaceChildren(...marks); ruler.style.width = tot * pps + "px";
-    relines(); layoutClouds(); layoutOvs(); layoutBusy(); syncBar();
+    relines(); layoutClouds(); layoutOvs(); layoutSnds(); layoutBusy(); syncBar();
   }
   function layoutBusy() {
     for (const el of track.querySelectorAll(".clip")) {
@@ -668,7 +752,7 @@ export async function openEditor(P, onExit) {
     for (const c of track.querySelectorAll(".clip")) c.classList.toggle("sel", c.dataset.id === sel);
     syncBar();
   });
-  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow) { sel = null; layout(); } });
+  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow || e.target === sndRow) { sel = null; layout(); } });
   track.addEventListener("pointerdown", (e) => {
     const el = e.target.closest(".clip");
     if (!el || e.button > 0) return;
@@ -748,6 +832,7 @@ export async function openEditor(P, onExit) {
   }
   function remove() {
     if (panel === "overlay" && ovSel) return removeOverlay();
+    if (panel === "sound" && sndSel) return removeSound();
     if (panel === "cloud" && cloudSel) return removeCloud();
     const i = P.clips.findIndex((c) => c.id === sel);
     if (i < 0) return;
@@ -911,9 +996,23 @@ export async function openEditor(P, onExit) {
           h("button.btn.wide.danger", { onclick: removeCloud }, "Удалить облако")]
           : [P.clouds.length ? h("p.hint", {}, "Чтобы изменить облако, нажмите на него на дорожке внизу.") : null].filter(Boolean)));
     } else if (panel === "sound") {
+      const x = P.sounds.find((y) => y.id === sndSel);
+      const add = h("button.btn.primary.wide", { onclick: () => { pause(); openSoundPicker({ onSound: addSound }); } }, icon("plus", 18), "Добавить музыку или звук здесь");
+      const ch = (fn) => { begin(); fn(); layoutSnds(); syncSnd(); renderPanel(); save(); };
+      const xsl = (label, key, min, max, def, show) => slider(label, () => x[key] ?? def, (v) => { x[key] = v; layoutSnds(); syncSnd(); }, { min, max, def, show });
+      const pct = (v) => Math.round(v * 100) + " %", sec = (v) => v.toFixed(1).replace(".", ",") + " с";
       side.replaceChildren(head("Звук"),
-        slider("Громкость", () => P.volume, (v) => { P.volume = v; setVolume(); }, { min: 0, max: 2, def: 1, show: (v) => Math.round(v * 100) + " %" }),
-        h("p.hint", {}, "Громче 100 % слышно в готовом видео; в превью звук не усиливается."));
+        h("div.sl-top.strong", {}, "Голос и звук видео"),
+        slider("Громкость видео", () => P.volume, (v) => { P.volume = v; setVolume(); }, { min: 0, max: 2, def: 1, show: pct }),
+        h("div.sl-top.strong", {}, "Музыка и звуки"),
+        add,
+        ...(x ? [h("div.ov-name", {}, icon("sound", 16), h("span", {}, sndName(x))),
+          xsl("Громкость", "volume", 0, 2, 1, pct),
+          xsl("Плавное начало", "fadeIn", 0, Math.min(8, x.end - x.start), 0, sec), xsl("Плавный конец", "fadeOut", 0, Math.min(8, x.end - x.start), 0, sec),
+          h("button.check" + (x.duck ? ".on" : ""), { onclick: () => ch(() => { x.duck = !x.duck; }) }, h("i", {}, x.duck ? icon("check", 14) : null), "Приглушать, когда говорят"),
+          h("p.hint", {}, "Тяните звук на дорожке внизу, за жёлтые края — обрезайте. Громче 100 % слышно только в готовом видео. Приглушение под голос в превью слышно, если созданы субтитры; в готовом видео — всегда."),
+          h("button.btn.wide.danger", { onclick: removeSound }, "Удалить звук")]
+          : [P.sounds.length ? h("p.hint", {}, "Чтобы изменить звук, нажмите на него на дорожке внизу.") : h("p.hint", {}, "Фоновая музыка или звуковой эффект из «Для монтажа ПАК» или с устройства. Музыка сама встанет тише и будет приглушаться под голос.")]));
     }
   }
   // кадр пальцами на превью
@@ -988,6 +1087,7 @@ export async function openEditor(P, onExit) {
     alive = false; ro.disconnect(); offMedia(); document.removeEventListener("keydown", onKey);
     for (const r of vids.values()) { r.v.src = ""; r.v.remove(); }
     for (const r of ovVids.values()) if (r.v) { r.v.src = ""; r.v.remove(); }
+    for (const r of sndEls.values()) if (r.el) { r.el.pause(); r.el.src = ""; }
     P.updated = Date.now(); P.duration = total();
     db.put("projects", P).finally(onExit);
   }
@@ -996,5 +1096,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }

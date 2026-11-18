@@ -170,9 +170,48 @@ def build_audio(project, out_wav):
     a = project.get("audio") or {}
     ap = audio_params(a)
     nf = noise_floor(joined) if (ap["denoise"] or ap["leveler"]) else -60.0
+    sounds = [x for x in project.get("sounds") or [] if x.get("file") and Path(x["file"]).exists()]
+    voice = Path(out_wav).with_suffix(".voice.wav") if sounds else Path(out_wav)
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(joined), "-af", audio_chain(a, total_len(segs), nf),
-                    "-c:a", "pcm_s24le", "-ar", "48000", str(out_wav)], check=True)
+                    "-c:a", "pcm_s24le", "-ar", "48000", str(voice)], check=True)
     joined.unlink(missing_ok=True)
+    if sounds:
+        mix_sounds(voice, sounds, total_len(segs), out_wav)
+        voice.unlink(missing_ok=True)
+
+
+def mix_sounds(voice, sounds, T, out_wav):
+    """Music and sound effects on top of the voice track (the app's «Звук» → sounds). Each sound: its part of the file
+    (from, start..end on the timeline), volume, fades; «duck» lowers it under the voice (sidechain compressor)."""
+    fmt = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+    inputs, parts, mix = ["-i", str(voice)], [f"[0:a]{fmt},asplit=2[v][sc0]"], ["[v]"]
+    ducked = [i for i, x in enumerate(sounds) if x.get("duck")]
+    if len(ducked) > 1:   # the voice feeds every ducked sound: split it once per sound
+        parts[0] = f"[0:a]{fmt},asplit={len(ducked) + 1}[v]" + "".join(f"[sc{k}]" for k in range(len(ducked)))
+    elif not ducked:
+        parts[0] = f"[0:a]{fmt}[v]"
+    for i, x in enumerate(sounds, 1):
+        start, end = max(0.0, float(x["start"])), min(T, float(x["end"]))
+        d = end - start
+        if d <= 0.01:
+            continue
+        inputs += ["-ss", f"{float(x.get('from') or 0):.6f}", "-t", f"{d:.6f}", "-i", str(x["file"])]
+        vol = 0.0 if x.get("mute") else float(x.get("volume", 1))
+        fi, fo = min(float(x.get("fadeIn") or 0), d), min(float(x.get("fadeOut") or 0), d)
+        chain = f"[{i}:a]{fmt},volume={vol:.4f}"
+        if fi > 0:
+            chain += f",afade=t=in:st=0:d={fi:.3f}"
+        if fo > 0:
+            chain += f",afade=t=out:st={max(0, d - fo):.3f}:d={fo:.3f}"
+        chain += f",adelay={int(round(start * 1000))}:all=1,apad=whole_dur={T:.6f}"
+        if x.get("duck"):
+            k = ducked.index(i - 1)
+            chain += f"[m{i}];[m{i}][sc{k}]sidechaincompress=threshold=0.02:ratio=8:attack=30:release=400:makeup=1"
+        parts.append(chain + f"[s{i}]")
+        mix.append(f"[s{i}]")
+    fc = ";".join(parts) + ";" + "".join(mix) + f"amix=inputs={len(mix)}:normalize=0:duration=first,atrim=0:{T:.6f},alimiter=limit=0.97:level=false[a]"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", fc, "-map", "[a]",
+                    "-c:a", "pcm_s24le", "-ar", "48000", str(out_wav)], check=True)
 
 
 def output_size(project, info):

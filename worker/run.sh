@@ -92,6 +92,17 @@ for i, o in enumerate(p.get("overlays") or []):
         o["file"] = local
     else:
         print("картинка-наложение не скачалась — её не будет в видео", file=sys.stderr)
+# музыка и звуки: с устройства (папка приложения) или из «Для монтажа ПАК»; берём только оттуда
+for i, x in enumerate(p.get("sounds") or []):
+    path = x.get("path", "")
+    if not (path.startswith("Для монтажа ПАК/") or path.startswith("10 бит/.studio/media/")) or ".." in path:
+        continue
+    os.makedirs("work/snd", exist_ok=True)
+    local = os.path.abspath(f"work/snd/{i}{os.path.splitext(path)[1].lower()}")
+    if subprocess.run(["mega-get", "/" + path, local], capture_output=True).returncode == 0 and os.path.exists(local):
+        x["file"] = local
+    else:
+        print("звук не скачался — его не будет в видео", file=sys.stderr)
 p["id"] = sys.argv[3]
 print(json.dumps(p, ensure_ascii=False))
 PY

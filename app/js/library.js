@@ -2,7 +2,7 @@
 import { h, icon, sheet, toast, fmtSize, fmtTime } from "./ui.js";
 import { cloud } from "./cloud.js";
 import { github } from "./github.js";
-import { library, ensure, addFromDevice, onMedia, busyOf, addImageFromDevice, packImages, addPackImage } from "./media.js";
+import { library, ensure, addFromDevice, onMedia, busyOf, addImageFromDevice, packImages, addPackImage, addAudioFromDevice, packAudio, addPackAudio, audioUrl } from "./media.js";
 
 export function openLibrary({ onPick }) {
   let items = null, error = null, picked = [];
@@ -110,6 +110,64 @@ export function openOverlayPicker({ onImage, onVideo }) {
           if (!rec) throw new Error("Это устройство не показывает такой формат видео.");
           s.close(); onVideo(rec);
         }
+      } catch (e) { toast(e.message, 5000); }
+    }
+  }
+  load();
+}
+
+// Окно «Музыка и звуки»: с устройства или из «Для монтажа ПАК» (с прослушиванием перед добавлением).
+export function openSoundPicker({ onSound }) {
+  const file = h("input", { type: "file", accept: "audio/*,.mp3,.m4a,.wav,.aac", hidden: true, onchange: fromDevice });
+  const list = h("div.list");
+  let items = null, error = null, q = "", player = null, playing = null;
+  const body = h("div.lib", {},
+    h("button.item.accent", { onclick: () => file.click() }, icon("sound"), h("span.item-main", {}, h("b", {}, "Музыка или звук с этого устройства"), h("small", {}, "Из «Файлов». Копия сама загрузится в MEGA — её возьмёт сборщик.")), file),
+    h("div.sec", {}, h("span", {}, "Для монтажа ПАК · музыка и звуки"), h("button.link", { onclick: () => load(true) }, "Обновить")),
+    list);
+  const stop = () => { if (player) { player.pause(); player.src = ""; } playing = null; };
+  const s = sheet("Музыка и звуки", body, { wide: true, onclose: () => { stop(); off(); } });
+  const off = onMedia(render);
+  async function load(refresh) {
+    error = null; if (refresh) { items = null; render(); }
+    try { items = cloud.signedIn() ? await packAudio(refresh) : []; } catch (e) { error = e.message; items = []; }
+    render();
+  }
+  function render() {
+    if (!cloud.signedIn()) return list.replaceChildren(h("p.muted.pad", {}, "Войдите в MEGA в «Настройках», чтобы видеть музыку и звуки из «Для монтажа ПАК»."));
+    if (!items) return list.replaceChildren(h("p.muted.pad", {}, "Ищу музыку и звуки…"));
+    if (error) return list.replaceChildren(h("p.muted.pad", {}, error));
+    if (!items.length) return list.replaceChildren(h("p.muted.pad", {}, "В «Для монтажа ПАК» не нашлось звуков (MP3, M4A, WAV)."));
+    const shown = items.filter((f) => !q || (f.path + "/" + f.name).toLowerCase().includes(q.toLowerCase()));
+    list.replaceChildren(items.length > 10 ? h("input.field", { placeholder: `Поиск среди ${items.length}`, value: q, oninput: (e) => { q = e.target.value; render(); list.querySelector("input").focus(); } }) : "",
+      ...shown.slice(0, 100).map((f) => {
+        const id = f.path + "/" + f.name;
+        return h("div.item.snd", {},
+          h("button.round.sm", { "aria-label": "Послушать", onclick: () => listen(f) }, icon(playing === id ? "pause" : "play", 16)),
+          h("button.item-main", { onclick: () => pick(f) }, h("b", {}, f.name), h("small", {}, (f.path.replace(/^Для монтажа ПАК\/?/, "") || "ПАК"))),
+          h("button.badge", { onclick: () => pick(f) }, "Добавить"));
+      }),
+      shown.length > 100 ? h("p.hint", {}, `Показаны первые 100 из ${shown.length}. Уточните поиск.`) : "");
+  }
+  async function listen(f) {
+    const id = f.path + "/" + f.name;
+    if (playing === id) { stop(); return render(); }
+    try {
+      const rec = await addPackAudio(f);
+      stop(); player ||= new Audio(); player.src = await audioUrl(rec.key); player.play().catch(() => {}); playing = id; player.onended = () => { playing = null; render(); };
+    } catch (e) { toast(e.message, 5000); }
+    render();
+  }
+  async function pick(f) {
+    try { const rec = await addPackAudio(f); s.close(); onSound(rec); } catch (e) { toast(e.message, 5000); }
+  }
+  async function fromDevice() {
+    const fs = [...file.files]; file.value = "";
+    for (const f of fs) {
+      try {
+        const { rec, upload } = await addAudioFromDevice(f);
+        upload.catch((e) => toast("Не удалось загрузить звук в MEGA: " + e.message, 6000));
+        s.close(); onSound(rec);
       } catch (e) { toast(e.message, 5000); }
     }
   }

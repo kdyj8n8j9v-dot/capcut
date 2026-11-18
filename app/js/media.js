@@ -208,3 +208,58 @@ export async function ensureImage(key, rec) {
   await db.put("blobs", blob, "img:" + key);
   return imageUrl(key);
 }
+
+// ——— музыка и звуки: с устройства (копия в MEGA «10 бит/.studio/media») и из «Для монтажа ПАК».
+// На устройстве хранятся в blobs под ключом "aud:<ключ>".
+const AUD = /\.(mp3|m4a|aac|wav|aif|aiff|ogg|opus|flac|caf|webm)$/i;
+export async function audioUrl(key) {
+  if (urls.has("aud:" + key)) return urls.get("aud:" + key);
+  const b = await db.get("blobs", "aud:" + key);
+  if (!b) return null;
+  const u = URL.createObjectURL(b); urls.set("aud:" + key, u); return u;
+}
+function audDur(blob) {
+  return new Promise((res, rej) => {
+    const a = new Audio(), u = URL.createObjectURL(blob), t = setTimeout(() => rej(new Error("Этот звук не открыть. Подходят MP3, M4A, WAV, AAC.")), 15000);
+    a.preload = "metadata";
+    a.onloadedmetadata = () => { clearTimeout(t); URL.revokeObjectURL(u); isFinite(a.duration) && a.duration > 0 ? res(a.duration) : rej(new Error("Не удалось узнать длину звука.")); };
+    a.onerror = () => { clearTimeout(t); URL.revokeObjectURL(u); rej(new Error("Этот звук не открыть. Подходят MP3, M4A, WAV, AAC.")); };
+    a.src = u;
+  });
+}
+export async function addAudioFromDevice(file) {
+  if (!cloud.signedIn()) throw new Error("Сначала войдите в MEGA в «Настройках»: звук нужен сборщику");
+  const key = await nameKey(file.name + ":" + file.size), name = key + extOf(file.name), path = PATHS.media + "/" + name;
+  const dur = await audDur(file);
+  await db.put("blobs", file, "aud:" + key);
+  const upload = (async () => {
+    try { setBusy(key, "Загружаю в MEGA", 0); await cloud.upload(PATHS.media, name, file, (p) => setBusy(key, "Загружаю в MEGA", p)); }
+    finally { setBusy(key, null); }
+  })();
+  return { rec: { key, name: file.name.normalize("NFC"), dur, path }, upload };
+}
+export async function packAudio(refresh) {
+  let list = settings.get("packAudio");
+  if (!list || refresh) {
+    list = (await cloud.find(PATHS.pack, AUD)).map((f) => ({ name: f.name, path: f.path, size: f.size })).sort((a, b) => (a.path + a.name).localeCompare(b.path + b.name, "ru"));
+    settings.set("packAudio", list);
+  }
+  return list;
+}
+export async function addPackAudio(f) {
+  const full = f.path + "/" + f.name, key = await nameKey(full);
+  let blob = await db.get("blobs", "aud:" + key);
+  if (!blob) {
+    setBusy(key, "Скачиваю", 0);
+    try { blob = await cloud.download(f.path, f.name, (p) => setBusy(key, "Скачиваю", p)); await db.put("blobs", blob, "aud:" + key); }
+    finally { setBusy(key, null); }
+  }
+  return { key, name: f.name, dur: await audDur(blob), path: full };
+}
+export async function ensureAudio(key, rec) {
+  if (await db.get("blobs", "aud:" + key)) return audioUrl(key);
+  if (!rec || !rec.path || !cloud.signedIn()) return null;
+  const i = rec.path.lastIndexOf("/");
+  await db.put("blobs", await cloud.download(rec.path.slice(0, i), rec.path.slice(i + 1)), "aud:" + key);
+  return audioUrl(key);
+}
