@@ -201,7 +201,10 @@ export async function openEditor(P, onExit) {
     vids.set(key, rec);
     v.addEventListener("loadeddata", () => { rec.w = v.videoWidth; rec.h = v.videoHeight; rec.ok = true; seek(t); makeThumbs(key); });
     v.addEventListener("seeked", draw);
-    v.src = url; ed.append(v);
+    // счётчик новых кадров: пока видео играет, превью перерисовывает картинку только с новым кадром
+    rec.frame = 0;
+    if (v.requestVideoFrameCallback) { rec.rvfc = true; const onF = () => { rec.frame++; v.requestVideoFrameCallback(onF); }; v.requestVideoFrameCallback(onF); }
+    v.src = url; rec.url = url; ed.append(v);
     return rec;
   }
   async function loadAll() {
@@ -224,12 +227,18 @@ export async function openEditor(P, onExit) {
       }
     } catch {} finally { restoring = false; }
   }
-  const offMedia = onMedia(() => { if (alive) { for (const k of Object.keys(P.media)) if (!vids.has(k)) video(k).then((r) => r && layout()); layoutBusy(); } });
+  const offMedia = onMedia(() => { if (alive) { for (const k of Object.keys(P.media)) if (!vids.has(k)) video(k).then((r) => r && layout()); else swapLight(k); layoutBusy(); } });
+  // пришла лёгкая копия (1080p) вместо тяжёлого оригинала с устройства — превью переходит на неё: iPad не тянет 4K, особенно на ускорении
+  async function swapLight(k) {
+    const r = vids.get(k), url = await mediaUrl(k);
+    if (!r || !url || r.url === url || playing) return;
+    r.url = url; r.ok = false; r.v.src = url;
+  }
 
   function draw() {
     if (!R || !alive) return;
     const loc = locate(t), rec = loc && vids.get(loc.clip.media);
-    if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade);
+    if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade, playing && rec.rvfc ? rec.frame : null);
     else R.draw(null);
     const c2 = over.getContext("2d");
     c2.clearRect(0, 0, over.width, over.height);
@@ -277,26 +286,28 @@ export async function openEditor(P, onExit) {
     syncOv(); syncSnd();
     syncBar(); requestAnimationFrame(tick);
   }
-  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncOv(); syncSnd(); syncBar(); }
+  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncOv(); syncSnd(); syncBar(); for (const k of vids.keys()) swapLight(k); }
   function toggle() { playing ? pause() : play(); }
+  let hardAt = 0;
   function tick(now) {
     if (!playing || !alive) return;
     const c = P.clips[pi], rec = c && vids.get(c.media), dt = (now - lastTick) / 1000; lastTick = now;
     if (!c) return pause();
     let local;
-    // часы — свои: время идёт всегда; пока видео успевает, ведёт оно (звук не расходится с картинкой),
-    // не успевает (ускорение, догрузка) — время не встаёт, а видео перепрыгивает туда, где должно быть
-    const expect = t - startOf(pi) + Math.min(dt, 0.1);
+    // часы — свои и плавные: время идёт по настоящим часам, видео играет с той же скоростью и только подстраивается.
+    // (раньше время бралось из видео — оно меняется рывками, по кадрам, а если видео не успевало — таймлайн вставал)
+    const step = Math.min(dt, 0.1), expect = t - startOf(pi) + step;
+    local = expect;
     if (rec && rec.ok) {
-      const v = rec.v, vLocal = outAt(c, v.currentTime), r = rateAt(c, expect);
-      setRate(v, r);
-      if (!v.seeking && v.readyState >= 3 && Math.abs(vLocal - expect) < 0.3) local = vLocal;
-      else {
-        local = expect;
-        if (!v.seeking && Math.abs(vLocal - expect) > 0.3) v.currentTime = Math.min(srcAt(c, expect), c.out - 0.001);
-        if (v.paused && !v.ended) v.play().catch(() => {});
+      const v = rec.v;
+      setRate(v, rateAt(c, expect));
+      if (!v.seeking && v.readyState >= 2) {
+        const d = outAt(c, v.currentTime) - expect;
+        if (Math.abs(d) > 0.35 && now - hardAt > 700) { hardAt = now; v.currentTime = Math.min(srcAt(c, expect), c.out - 0.001); }   // отстало сильно — перескочить (не чаще раза в 0,7 с)
+        else if (Math.abs(d) > 0.08) local = expect + clamp(d * 0.04, -0.1 * step, 0.1 * step);   // чуть-чуть — часы мягко (не больше 10 %) подтягиваются к видео
       }
-    } else local = expect;   // нет копии — чёрный кадр, время идёт
+      if (v.paused && !v.ended && !v.seeking) v.play().catch(() => {});
+    }   // нет копии — чёрный кадр, время идёт
     if (local >= len(c) - 0.015 || (rec && rec.v.ended)) {
       if (rec) rec.v.pause();
       pi++;
@@ -870,10 +881,15 @@ export async function openEditor(P, onExit) {
     }
   }
   function zoom(k) { pps = clamp(pps * k, 3, 240); layout(); scroll.scrollLeft = t * pps; }
+  // при воспроизведении таймлайн крутит сама программа; паузу ставит только палец (или колесо), а не запоздавшее
+  // событие прокрутки от iPad — раньше из-за него воспроизведение само останавливалось и дёргалось
+  let userAt = 0;
+  for (const ev of ["touchstart", "touchmove", "pointerdown", "wheel"]) scroll.addEventListener(ev, () => { userAt = performance.now(); }, { passive: true });
   scroll.addEventListener("scroll", () => {
     if (drag) return;
     const ts = scroll.scrollLeft / pps;
     if (Math.abs(ts - t) * pps < 1.5) return;
+    if (playing && performance.now() - userAt > 1200) return;
     if (playing) pause();
     seek(ts, true);
   });

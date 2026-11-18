@@ -118,6 +118,7 @@ export function createRenderer(canvas) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, o.f); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, o.t, 0);
   };
   const src = tex(), A = target(), B = target(), C = target();
+  let last = null, lastFrame = null;
   const pass = (pr, to, w, h, input, set) => {
     gl.bindFramebuffer(gl.FRAMEBUFFER, to ? to.f : null); gl.viewport(0, 0, w, h);
     gl.useProgram(pr.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, input); gl.uniform1i(pr.u("tex"), 0);
@@ -125,11 +126,16 @@ export function createRenderer(canvas) {
   };
   return {
     // video: источник (или null — чёрный кадр); out: размер итогового кадра; fr: кадр клипа; g: цвет
-    draw(video, sw, sh, out, fr, g) {
+    // frame — номер кадра видео (если браузер его сообщает): тот же кадр второй раз в видеокарту не грузим —
+    // для 4K это самое дорогое место превью
+    draw(video, sw, sh, out, fr, g, frame) {
       const W = canvas.width, H = canvas.height;
-      if (!video || !sw) { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
+      if (!video || !sw) { last = null; gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
       gl.bindTexture(gl.TEXTURE_2D, src);
-      try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); } catch { return; }
+      if (frame == null || last !== video || lastFrame !== frame) {
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); } catch { return; }
+        last = video; lastFrame = frame;
+      }
       fr = { ...FRAME_DEFAULT, ...fr }; g = { ...GRADE_DEFAULT, ...g };
       size(A, W, H);
       const th = -fr.rot * Math.PI / 180;

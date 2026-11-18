@@ -66,7 +66,8 @@ async function fetchProxy(m) {
   setBusy(m.key, "Скачиваю", 0);
   const blob = await cloud.download(PATHS.studio, stem(m.name) + ".proxy.mp4", (p) => setBusy(m.key, "Скачиваю", p));
   await db.put("blobs", new Blob([blob], { type: "video/mp4" }), m.key);
-  const old = urls.get(m.key); if (old && !files.has(m.key)) { URL.revokeObjectURL(old); urls.delete(m.key); }
+  // дальше превью играет лёгкую копию, а не оригинал с устройства (4K с iPhone на ускорении iPad не успевает показывать)
+  files.delete(m.key); urls.delete(m.key);
   try { await db.put("blobs", await cloud.getText(PATHS.studio, stem(m.name) + ".transcript.json"), m.key + ".words"); } catch {}
   const info = await probe(await mediaUrl(m.key));
   return saveMeta({ key: m.key, name: m.name, size: m.size, ts: m.ts, ...info });
