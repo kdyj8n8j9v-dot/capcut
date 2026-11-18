@@ -153,10 +153,38 @@ async function run(label, viewport, scale) {
   const p2 = await ed(() => window.__ed.P.clips[0].curve[2]);
   await page.mouse.move(cvb.x + cvb.width * p2[0], cvb.y + cvb.height * 0.75); await page.mouse.down(); await page.mouse.move(cvb.x + cvb.width * p2[0], cvb.y + cvb.height * 0.15, { steps: 5 }); await page.mouse.up();
   ok(await ed(() => window.__ed.P.clips[0].curve[2][1]) > p2[1] * 3, "точку кривой можно тянуть пальцем");
+  // секунды меняются, пока палец ещё на точке; видео встаёт на кадр под точкой
+  const p3 = await ed(() => window.__ed.P.clips[0].curve[3]), info0 = await page.textContent(".speed-info");
+  const cvb2 = await page.locator("canvas.curve").boundingBox(), yOf = (v) => (160 - 8 - Math.log(v / 0.1) / Math.log(100) * (160 - 8 - 18)) / 160;
+  await page.mouse.move(cvb2.x + cvb2.width * p3[0], cvb2.y + cvb2.height * yOf(p3[1])); await page.mouse.down();
+  await page.mouse.move(cvb2.x + cvb2.width * (p3[0] - 0.05), cvb2.y + cvb2.height * 0.15, { steps: 5 });
+  const info1 = await page.textContent(".speed-info"), tAt = await ed(() => window.__ed.t);
+  const want = await ed(() => { const c = window.__ed.P.clips[0]; return c.curve[3][0]; });
+  await page.mouse.up();
+  ok(info1 !== info0, `секунды видны сразу, пока тянете точку (${info0} → ${info1})`);
+  ok(Math.abs(await ed(() => { const c = window.__ed.P.clips[0]; return (window.__ed.srcAt(c, window.__ed.t) - c.in) / (c.out - c.in); }) - want) < 0.03, `видео показывает кадр под точкой (t = ${tAt.toFixed(2)})`);
+  // добавить и убрать точку
+  const nP = await ed(() => window.__ed.P.clips[0].curve.length);
+  await page.mouse.click(cvb2.x + cvb2.width * 0.12, cvb2.y + cvb2.height * 0.97);   // листать по пустому месту
+  await page.click(".curve-box >> text=Точка");
+  ok(await ed(() => window.__ed.P.clips[0].curve.length) === nP + 1, "«+ Точка» ставит новую точку там, где белая линия");
+  await page.click(".curve-box >> text=Убрать точку");
+  ok(await ed(() => window.__ed.P.clips[0].curve.length) === nP, "«Убрать точку»");
+  ok(await page.locator(".tiles.curves button.on[data-curve=custom]").count() === 1, "изменённая кривая — «Своя»");
+  await shot("9c-curve2");
   await shot("9c-curve");
   await page.click(".panel .seg >> text=Обычная");
   await page.click(".panel .tiles >> text=1×");
   ok(Math.abs(await ed(() => window.__ed.total()) - T0) < 0.02 && !(await ed(() => window.__ed.P.clips[0].speed)), "скорость возвращается к 1×");
+  // воспроизведение с ускорением и кривой: время на таймлайне не встаёт
+  for (const [name, fn] of [["4×", (c) => { c.speed = 4; }], ["кривая «Вспышка»", (c) => { delete c.speed; c.curve = [[0, 5], [0.3, 4], [0.5, 1], [1, 1]]; }]]) {
+    await ed(`(${fn})(window.__ed.P.clips[0]); window.__ed.seek(0.01)`);
+    await page.click('[aria-label="Пуск"]'); await page.waitForTimeout(700);
+    const tp = await ed(() => window.__ed.t); await page.click('[aria-label="Пуск"]').catch(() => {});
+    await ed(() => { window.__ed.pause?.(); });
+    ok(tp > 0.35, `воспроизведение ${name}: время идёт (${tp.toFixed(2)} с за 0,7 с)`);
+  }
+  await ed(() => { const c = window.__ed.P.clips[0]; delete c.speed; delete c.curve; window.__ed.seek(0.2); });
   await page.click(".panel-head >> text=Готово");
   // нажали на клип — внизу его действия
   await page.evaluate(() => document.querySelector(".tl-ruler").click());

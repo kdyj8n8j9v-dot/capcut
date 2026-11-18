@@ -256,7 +256,7 @@ textarea.txt { font-size: 17px; }
 .tiles.curves { grid-template-columns: repeat(2, 1fr); }
 .tiles.curves button { display: flex; align-items: center; gap: 8px; text-align: left; } .tiles.curves .cv { color: var(--sel); flex: none; display: inline-flex; }
 .tiles.curves button.on .cv { color: var(--accent); }
-.curve-box { margin: 4px 0 8px; } canvas.curve { width: 100%; height: auto; aspect-ratio: 2 / 1; border-radius: 12px; background: #111113; touch-action: none; display: block; }
+.curve-box { margin: 4px 0 8px; } canvas.curve { width: 100%; height: auto; aspect-ratio: 300 / 160; border-radius: 12px; background: #111113; touch-action: none; display: block; }
 .tl-track { position: relative; }
 .trb { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 6px; background: #fff; color: #000; font-size: 12px; line-height: 22px; text-align: center; z-index: 3; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
 .trb.on { background: var(--sel); } .trb.sel { box-shadow: 0 0 0 2px var(--accent); }
@@ -304,3 +304,5 @@ textarea.txt { font-size: 17px; }
 .clipbar .tool[data-tool=back] { border-right: 1px solid var(--line); border-radius: 0; color: var(--muted); }
 .clipbar .tool[data-tool=c-delete] { color: var(--danger); }
 @media (max-width: 480px) { .clipbar .tool { flex: 0 0 auto; padding: 0 7px; } }
+.speed-info { margin: 6px 0 8px; font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; } .speed-info b { color: var(--text); }
+.curve-box .row-btns { margin-top: 8px; }

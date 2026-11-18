@@ -248,7 +248,7 @@ export async function openEditor(P, onExit) {
       const rec = vids.get(loc.clip.media);
       if (rec && rec.ok) {
         const want = Math.min(srcAt(loc.clip, loc.local), loc.clip.out - 0.001);
-        rec.v.playbackRate = rateAt(loc.clip, loc.local);
+        setRate(rec.v, rateAt(loc.clip, loc.local));
         if (Math.abs(rec.v.currentTime - want) > 0.005) rec.v.currentTime = want;
       }
     }
@@ -256,8 +256,11 @@ export async function openEditor(P, onExit) {
     tNow.textContent = fmtTime(t, true);
     syncOv(); syncSnd();
     draw();
-    if ((panel === "frame" || panel === "mask" || panel === "speed") && loc?.clip.id !== shown && !ptrs.size) renderPanel();
+    if ((panel === "frame" || panel === "mask" || panel === "speed") && loc?.clip.id !== shown && !ptrs.size && !sel) renderPanel();
+    if (panel === "speed" && curveHook && side.querySelector("canvas.curve")) curveHook();
   }
+  // скорость видео меняем, только если она заметно другая: частые смены на iPad останавливают картинку и звук
+  function setRate(v, r) { r = clamp(r, 0.0625, 16); if (Math.abs(v.playbackRate - r) > r * 0.04) try { v.playbackRate = r; } catch {} }
   function setVolume() { for (const r of vids.values()) { r.v.volume = clamp(P.volume, 0, 1); r.v.muted = P.volume <= 0; } }
   function play() {
     if (!P.clips.length) return;
@@ -268,7 +271,7 @@ export async function openEditor(P, onExit) {
     // iPad/iPhone: каждое видео должно быть запущено касанием хотя бы раз
     for (const [k, r] of vids) if (k !== loc.clip.media && !r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.v.pause(); }).catch(() => {}); }
     const rec = vids.get(loc.clip.media);
-    if (rec) { rec.unlocked = true; rec.v.playbackRate = rateAt(loc.clip, loc.local); rec.v.play().catch(() => {}); }
+    if (rec) { rec.unlocked = true; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
     for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
     for (const a of sndEls.values()) if (a.el && !a.unlocked) { a.unlocked = true; const p = a.el.play(); p && p.then(() => syncSnd()).catch(() => {}); }
     syncOv(); syncSnd();
@@ -281,14 +284,26 @@ export async function openEditor(P, onExit) {
     const c = P.clips[pi], rec = c && vids.get(c.media), dt = (now - lastTick) / 1000; lastTick = now;
     if (!c) return pause();
     let local;
-    if (rec && rec.ok) { local = outAt(c, rec.v.currentTime); if (c.curve) rec.v.playbackRate = clamp(rateAt(c, local), 0.1, 16); } else local = t - startOf(pi) + dt;   // нет копии — чёрный кадр, время идёт
+    // часы — свои: время идёт всегда; пока видео успевает, ведёт оно (звук не расходится с картинкой),
+    // не успевает (ускорение, догрузка) — время не встаёт, а видео перепрыгивает туда, где должно быть
+    const expect = t - startOf(pi) + Math.min(dt, 0.1);
+    if (rec && rec.ok) {
+      const v = rec.v, vLocal = outAt(c, v.currentTime), r = rateAt(c, expect);
+      setRate(v, r);
+      if (!v.seeking && v.readyState >= 3 && Math.abs(vLocal - expect) < 0.3) local = vLocal;
+      else {
+        local = expect;
+        if (!v.seeking && Math.abs(vLocal - expect) > 0.3) v.currentTime = Math.min(srcAt(c, expect), c.out - 0.001);
+        if (v.paused && !v.ended) v.play().catch(() => {});
+      }
+    } else local = expect;   // нет копии — чёрный кадр, время идёт
     if (local >= len(c) - 0.015 || (rec && rec.v.ended)) {
       if (rec) rec.v.pause();
       pi++;
       if (pi >= P.clips.length) { playing = false; t = total(); scroll.scrollLeft = t * pps; syncBar(); draw(); return; }
       const n = P.clips[pi], nr = vids.get(n.media);
       t = startOf(pi);
-      if (nr && nr.ok) { nr.v.currentTime = n.in; nr.v.playbackRate = rateAt(n, 0); nr.v.play().catch(() => {}); }
+      if (nr && nr.ok) { nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
     } else t = startOf(pi) + Math.max(0, local);
     scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
@@ -1133,25 +1148,46 @@ export async function openEditor(P, onExit) {
     } else if (panel === "speed") {
       const c = target(); shown = c?.id;
       if (!c) return side.replaceChildren(head("Скорость"), h("p.muted", {}, "Добавьте видео."));
-      const at = startOf(P.clips.indexOf(c));
-      const done = () => { layout(); seek(Math.min(at + 0.01, total())); renderPanel(); save(); };
+      const ci = P.clips.indexOf(c), at = startOf(ci);
+      // после правки линия остаётся там же в исходнике (тот же кадр), а не прыгает в начало клипа
+      const keep = () => { const loc = locate(t); return loc && loc.clip === c ? srcAt(c, loc.local) : null; };
+      const done = (src = keep()) => { layout(); seek(src == null ? at + 0.01 : startOf(ci) + Math.min(outAt(c, src), len(c) - 0.02)); renderPanel(); save(); };
       const set = (v) => { begin(); delete c.curve; if (v === 1) delete c.speed; else c.speed = v; done(); };
       const cur = sp(c), srcLen = c.out - c.in, mode = c.curve ? 1 : speedTab;
       const tabs = h("div.seg", {}, ["Обычная", "Кривая"].map((n, i) => h("button" + (mode === i ? ".on" : ""), { onclick: () => { speedTab = i; if (i === 0 && c.curve) { begin(); delete c.curve; done(); } else renderPanel(); } }, n)));
-      const info = h("p.hint", {}, `Кусок исходника ${fmtTime(srcLen, true)} → на экране ${fmtTime(len(c), true)}.`);
+      const info = h("p.speed-info", {});
+      // секунды — сразу, пока тянете: длина клипа на экране, длина ролика, ширина клипа на таймлайне
+      const live = () => {
+        info.replaceChildren(h("span", {}, "Было ", h("b", {}, fmtTime(srcLen, true))), h("span", {}, " → стало ", h("b", {}, fmtTime(len(c), true))));
+        tAll.textContent = fmtTime(total());
+        const el = track.querySelector(`.clip[data-id="${c.id}"]`); if (el) { el.style.width = len(c) * pps + "px"; const s = el.querySelector(".clip-len"); if (s) s.textContent = fmtTime(len(c), true); }
+      };
+      live();
       if (mode === 0) {
-        side.replaceChildren(head("Скорость", (cur !== 1 || c.curve) && (() => set(1))), tabs,
-          h("p.hint", {}, "Для клипа, который сейчас на экране. Звук ускоряется и замедляется без изменения тона."),
+        side.replaceChildren(head("Скорость", (cur !== 1 || c.curve) && (() => set(1))), tabs, info,
           h("div.tiles", {}, [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((v) => h("button" + (!c.curve && Math.abs(cur - v) < 1e-6 ? ".on" : ""), { onclick: () => set(v) }, String(v).replace(".", ",") + "×"))),
-          slider("Точно", () => cur, (v) => { c.speed = Math.round(v * 100) / 100; }, { min: 0.25, max: 4, step: 0.05, def: 1, show: (v) => v.toFixed(2).replace(".", ",") + "×" }), info);
-        side.querySelector("input[type=range]").addEventListener("change", done);
+          slider("Точно", () => cur, (v) => { c.speed = Math.round(v * 100) / 100; live(); }, { min: 0.25, max: 4, step: 0.05, def: 1, show: (v) => v.toFixed(2).replace(".", ",") + "×" }),
+          h("p.hint", {}, "Для выбранного клипа. Звук ускоряется и замедляется без изменения тона."));
+        side.querySelector("input[type=range]").addEventListener("change", () => done());
       } else {
-        const preset = CURVES.find(([, , pts]) => JSON.stringify(pts) === JSON.stringify(c.curve));
-        const graph = c.curve ? curveEditor(c, done) : null;
+        const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        const mine = settings.get("myCurves") || [];
+        const preset = CURVES.find(([, , pts]) => same(pts, c.curve)) || mine.find(([, , pts]) => same(pts, c.curve));
+        const pick = (pts) => { begin(); delete c.speed; c.curve = pts.map((p) => [...p]); curveSel = -1; done(); };
+        const tile = (k, n, pts, extra) => h("button" + ((k === "custom" ? c.curve && !preset : preset && preset[0] === k) ? ".on" : ""), { "data-curve": k, onclick: () => pick(pts) }, curveIcon(pts), h("span", {}, n), extra);
+        const graph = c.curve ? curveEditor(c, done, live) : null;
+        const saveMine = async () => {
+          const name = await askText("Название шаблона", "Мой " + (mine.length + 1));
+          if (!name) return;
+          settings.set("myCurves", [...mine, ["my" + uid(), name.slice(0, 24), c.curve.map((p) => [...p])]]); renderPanel(); toast("Шаблон сохранён");
+        };
+        const dropMine = (k) => (e) => { e.stopPropagation(); settings.set("myCurves", mine.filter((x) => x[0] !== k)); renderPanel(); };
         side.replaceChildren(head("Скорость", c.curve && (() => set(1))), tabs,
-          h("p.hint", {}, "Скорость меняется внутри клипа: разгон, замедление, вспышка. Выберите шаблон, потом поправьте точки пальцем."),
-          h("div.tiles.curves", {}, favSort("curve", CURVES).map(([k, n, pts]) => h("button" + (preset && preset[0] === k ? ".on" : ""), { onclick: () => { begin(); delete c.speed; c.curve = pts.map((p) => [...p]); done(); } }, curveIcon(pts), h("span", {}, n), favStar("curve", k, renderPanel)))),
-          ...(c.curve ? [graph, info] : [h("p.hint", {}, "Сейчас кривой нет — нажмите на шаблон.")]));
+          ...(c.curve ? [info, graph] : [h("p.hint", {}, "Нажмите «Своя» или шаблон — появится кривая с точками.")]),
+          h("div.tiles.curves", {}, tile("custom", "Своя", c.curve && !preset ? c.curve : [[0, 1], [0.25, 1], [0.5, 1], [0.75, 1], [1, 1]]),
+            ...mine.map(([k, n, pts]) => tile(k, n, pts, h("span.star", { onclick: dropMine(k), title: "Убрать шаблон" }, "×"))),
+            ...favSort("curve", CURVES).map(([k, n, pts]) => tile(k, n, pts, favStar("curve", k, renderPanel)))),
+          c.curve ? h("div.row-btns", {}, h("button.btn.sm", { onclick: saveMine }, "Сохранить кривую как шаблон")) : null);
       }
     } else if (panel === "mask") {
       const c = target(); shown = c?.id;
@@ -1277,38 +1313,77 @@ export async function openEditor(P, onExit) {
     const d = Array.from({ length: 33 }, (_, i) => { const u = i / 32; return `${(u * 60).toFixed(1)},${(22 - ly(speedAt(pts, u)) * 20).toFixed(1)}`; }).join(" ");
     return h("span.cv", { html: `<svg viewBox="0 0 60 24" width="60" height="24"><line x1="0" x2="60" y1="${22 - ly(1) * 20}" y2="${22 - ly(1) * 20}" stroke="rgba(255,255,255,.25)" stroke-dasharray="2 2"/><polyline points="${d}" fill="none" stroke="currentColor" stroke-width="2"/></svg>` });
   }
-  function curveEditor(c, done) {
-    const W = 300, H = 150, cv = h("canvas.curve", { width: W * 2, height: H * 2 }), g = cv.getContext("2d");
+  // редактор кривой как в CapCut: белая линия — где сейчас кадр; тяните по пустому месту — листать видео;
+  // точку можно взять и двигать (видео показывает кадр под точкой), добавить или убрать кнопками
+  let curveSel = -1;
+  function curveEditor(c, done, live) {
+    const W = 300, H = 160, T = 18, cv = h("canvas.curve", { width: W * 2, height: H * 2 }), g = cv.getContext("2d");
+    const S = Math.max(1e-6, c.out - c.in), ci = () => P.clips.indexOf(c);
+    const Y = (v) => H - 8 - ly(v) * (H - 8 - T);
+    const nowU = () => { const loc = locate(t); return loc && loc.clip === c ? clamp((srcAt(c, loc.local) - c.in) / S, 0, 1) : null; };
+    const goU = (u) => { const i = ci(); if (i < 0) return; seek(startOf(i) + clamp(outAt(c, c.in + u * S), 0, len(c) - 0.02)); };
+    const addB = h("button.btn.sm", { onclick: () => {
+      const u = nowU() ?? 0.5, near = c.curve.findIndex(([pu]) => Math.abs(pu - u) < 0.03);
+      if (near >= 0) { curveSel = near; return paint(); }
+      begin(); const v = Math.round(speedAt(c.curve, u) * 100) / 100, i = c.curve.findIndex(([pu]) => pu > u);
+      c.curve.splice(i, 0, [Math.round(u * 1000) / 1000, v]); curveSel = i; done();
+    } }, icon("plus", 16), "Точка");
+    const delB = h("button.btn.sm", { onclick: () => {
+      if (curveSel <= 0 || curveSel >= c.curve.length - 1) return toast("Выберите точку внутри кривой — крайние не убираются");
+      begin(); c.curve.splice(curveSel, 1); curveSel = -1; done();
+    } }, icon("trash", 16), "Убрать точку");
     const paint = () => {
+      if (!c.curve || !cv.isConnected) return;
       g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, W, H);
-      g.strokeStyle = "rgba(255,255,255,.12)"; g.fillStyle = "rgba(255,255,255,.45)"; g.font = "10px -apple-system, sans-serif";
-      for (const v of [0.25, 0.5, 1, 2, 4, 8]) { const y = H - 8 - ly(v) * (H - 16); g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); g.fillText(String(v).replace(".", ",") + "×", 3, y - 2); }
+      g.strokeStyle = "rgba(255,255,255,.12)"; g.fillStyle = "rgba(255,255,255,.45)"; g.font = "10px -apple-system, sans-serif"; g.lineWidth = 1;
+      for (const v of [0.25, 0.5, 1, 2, 4, 8]) { const y = Y(v); g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); g.fillText(String(v).replace(".", ",") + "×", 3, y - 2); }
       g.strokeStyle = "#ffd60a"; g.lineWidth = 2.5; g.beginPath();
-      for (let i = 0; i <= 100; i++) { const u = i / 100, y = H - 8 - ly(speedAt(c.curve, u)) * (H - 16); i ? g.lineTo(u * W, y) : g.moveTo(0, y); }
+      for (let i = 0; i <= 120; i++) { const u = i / 120, y = Y(speedAt(c.curve, u)); i ? g.lineTo(u * W, y) : g.moveTo(0, y); }
       g.stroke();
-      for (const [u, v] of c.curve) { g.fillStyle = "#fff"; g.beginPath(); g.arc(clamp(u * W, 7, W - 7), H - 8 - ly(v) * (H - 16), 7, 0, 7); g.fill(); }
+      const u0 = nowU();
+      if (u0 != null) { g.strokeStyle = "#fff"; g.lineWidth = 1.5; g.beginPath(); g.moveTo(u0 * W, T - 4); g.lineTo(u0 * W, H); g.stroke(); }
+      c.curve.forEach(([u, v], i) => {
+        const x = clamp(u * W, 7, W - 7), y = Y(v), on = i === curveSel;
+        g.fillStyle = on ? "#ffd60a" : "#fff"; g.beginPath(); g.arc(x, y, on ? 8 : 6.5, 0, 7); g.fill();
+        if (on) {   // над выбранной точкой — её скорость и секунда ролика
+          const sec = outAt(c, c.in + u * S), lbl = String(v).replace(".", ",") + "×  " + fmtTime(sec, true);
+          g.font = "600 11px -apple-system, sans-serif"; const tw = g.measureText(lbl).width + 10, bx = clamp(x - tw / 2, 0, W - tw);
+          g.fillStyle = "rgba(0,0,0,.75)"; g.fillRect(bx, 0, tw, 15); g.fillStyle = "#ffd60a"; g.fillText(lbl, bx + 5, 11);
+        }
+      });
+      const inner = curveSel > 0 && curveSel < c.curve.length - 1;
+      delB.disabled = !inner;
     };
-    let dragI = -1;
-    const pt = (e) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, 1 - ((e.clientY - r.top) / r.height * H - 8) / (H - 16)]; };
+    let dragI = -1, moved = false;
+    const pt = (e) => { const r = cv.getBoundingClientRect(); return [clamp((e.clientX - r.left) / r.width, 0, 1), (e.clientY - r.top) / r.height * H]; };
     cv.addEventListener("pointerdown", (e) => {
-      const [u, y] = pt(e); let best = -1, bd = 0.08;
-      c.curve.forEach(([pu, pv], i) => { const d = Math.hypot(pu - u, (ly(pv) - y) * 0.5); if (d < bd) { bd = d; best = i; } });
-      if (best < 0) return;
-      e.preventDefault(); begin(); dragI = best; cv.setPointerCapture(e.pointerId);
-    });
-    cv.addEventListener("pointermove", (e) => {
-      if (dragI < 0) return;
-      const [u, y] = pt(e), p = c.curve[dragI], n = c.curve.length;
-      p[1] = Math.round(vy(clamp(y, 0, 1)) * 100) / 100;
-      if (dragI > 0 && dragI < n - 1) p[0] = clamp(u, c.curve[dragI - 1][0] + 0.03, c.curve[dragI + 1][0] - 0.03);
-      if (Math.abs(p[1] - 1) < 0.06) p[1] = 1;
+      const [u, py] = pt(e); let best = -1, bd = 22;   // 22 точки экрана — палец попадает
+      c.curve.forEach(([pu, pv], i) => { const d = Math.hypot((pu - u) * W, Y(pv) - py); if (d < bd) { bd = d; best = i; } });
+      e.preventDefault(); pause(); cv.setPointerCapture(e.pointerId); moved = false;
+      if (best >= 0) { dragI = best; curveSel = best; goU(c.curve[best][0]); }
+      else { dragI = -2; goU(u); }
       paint();
     });
-    const upC = () => { if (dragI < 0) return; dragI = -1; done(); };
+    cv.addEventListener("pointermove", (e) => {
+      if (dragI === -1) return;
+      const [u, py] = pt(e);
+      if (dragI === -2) { goU(u); return paint(); }
+      if (!moved) { begin(); moved = true; }
+      const p = c.curve[dragI], n = c.curve.length;
+      let v = Math.round(vy(clamp((H - 8 - py) / (H - 8 - T), 0, 1)) * 100) / 100;
+      if (Math.abs(v - 1) < 0.06) v = 1;
+      p[1] = v;
+      if (dragI > 0 && dragI < n - 1) p[0] = Math.round(clamp(u, c.curve[dragI - 1][0] + 0.03, c.curve[dragI + 1][0] - 0.03) * 1000) / 1000;
+      live(); goU(p[0]); paint();
+    });
+    const upC = () => { const was = dragI; dragI = -1; if (was >= 0 && moved) done(); };
     cv.addEventListener("pointerup", upC); cv.addEventListener("pointercancel", upC);
+    curveHook = paint;   // при воспроизведении и прокрутке белая линия идёт вместе с видео
     paint();
-    return h("div.curve-box", {}, cv, h("p.hint", {}, "Тяните белые точки вверх — быстрее, вниз — медленнее. Пунктир — обычная скорость."));
+    return h("div.curve-box", {}, cv, h("div.row-btns", {}, addB, delB),
+      h("p.hint", {}, "Точку вверх — быстрее, вниз — медленнее. «Точка» — новая там, где белая линия."));
   }
+  let curveHook = null;
   // обработка голоса: та же цепочка, что в «Студии 10 бит» (render.py audio_chain); слышна в готовом видео
   const VOICE_ON = { rumble: 0.5, denoise: 0.35, deess: 0.3, mud: 0.35, pres: 0.4, air: 0.2, comp: 0.5, leveler: 0.5, lufs: -14 };
   const VOICE = [["rumble", "Убрать гул и низкий шум"], ["denoise", "Убрать шум (фон, вентилятор)"], ["deess", "Смягчить «с» и «ш»"], ["mud", "Убрать бубнение"],
@@ -1420,5 +1495,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
+  window.__ed = { P, seek, srcAt, pause, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
 }
