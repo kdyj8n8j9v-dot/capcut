@@ -28,7 +28,7 @@ const GROUPS = [
 const BAND_COLORS = ["#ff453a", "#ff9f0a", "#ffd60a", "#30d158", "#40c8e0", "#0a84ff", "#bf5af2", "#ff375f"];
 
 export async function openEditor(P, onExit) {
-  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {}; P.texts ||= [];
+  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {}; P.texts ||= []; P.voice ||= {};
   const root = document.getElementById("app");
   let t = 0, sel = null, pps = 40, playing = false, pi = 0, panel = null, alive = true, lastTick = 0;
   const undo = [], redo = [];
@@ -51,7 +51,7 @@ export async function openEditor(P, onExit) {
   let shown = null;
 
   // ——— история и сохранение
-  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds, overlays: P.overlays, images: P.images, sounds: P.sounds, audios: P.audios, texts: P.texts });
+  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds, overlays: P.overlays, images: P.images, sounds: P.sounds, audios: P.audios, texts: P.texts, voice: P.voice });
   let saveT;
   function save() {
     clearTimeout(saveT);
@@ -73,7 +73,7 @@ export async function openEditor(P, onExit) {
       if (!r || !alive) return;
       if (dirty && !(await ask("В облаке новая версия проекта", (r.by === "claude" ? "Её прислал чат «Монтаж»." : "Она сохранена с другого вашего устройства.") + " Загрузить её? Ваши последние правки на этом устройстве заменятся.", "Загрузить", false))) return;
       for (const k of Object.keys(P)) delete P[k];
-      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {}; P.texts ||= [];
+      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {}; P.texts ||= []; P.voice ||= {};
       dirty = false; undo.length = redo.length = 0; sel = null; cloudSel = null; subSel = []; subAll = true; subWord = null;
       await db.put("projects", P); titleBtn.textContent = P.name;
       pause(); await loadAll(); fit(); renderPanel(); syncBar(); seek(Math.min(t, total()));
@@ -1084,6 +1084,7 @@ export async function openEditor(P, onExit) {
       side.replaceChildren(head("Звук"),
         h("div.sl-top.strong", {}, "Голос и звук видео"),
         slider("Громкость видео", () => P.volume, (v) => { P.volume = v; setVolume(); }, { min: 0, max: 2, def: 1, show: pct }),
+        ...voiceBox(),
         h("div.sl-top.strong", {}, "Музыка и звуки"),
         add,
         ...(x ? [h("div.ov-name", {}, icon("sound", 16), h("span", {}, sndName(x))),
@@ -1094,6 +1095,23 @@ export async function openEditor(P, onExit) {
           h("button.btn.wide.danger", { onclick: removeSound }, "Удалить звук")]
           : [P.sounds.length ? h("p.hint", {}, "Чтобы изменить звук, нажмите на него на дорожке внизу.") : h("p.hint", {}, "Фоновая музыка или звуковой эффект из «Для монтажа ПАК» или с устройства. Музыка сама встанет тише и будет приглушаться под голос.")]));
     }
+  }
+  // обработка голоса: та же цепочка, что в «Студии 10 бит» (render.py audio_chain); слышна в готовом видео
+  const VOICE_ON = { rumble: 0.5, denoise: 0.35, deess: 0.3, mud: 0.35, pres: 0.4, air: 0.2, comp: 0.5, leveler: 0.5, lufs: -14 };
+  const VOICE = [["rumble", "Убрать гул и низкий шум"], ["denoise", "Убрать шум (фон, вентилятор)"], ["deess", "Смягчить «с» и «ш»"], ["mud", "Убрать бубнение"],
+    ["body", "Плотность голоса", -1], ["pres", "Разборчивость", -1], ["air", "Воздух, звонкость", -1], ["comp", "Ровнее по громкости"], ["leveler", "Подтянуть тихие фразы"]];
+  let voiceOpen = false;
+  function voiceBox() {
+    const v = P.voice, on = Object.keys(VOICE_ON).some((k) => v[k]);
+    const ch = (fn) => { begin(); fn(); renderPanel(); save(); };
+    return [
+      h("div.row-btns", {}, h("button.btn.sm" + (on ? ".primary" : ""), { onclick: () => ch(() => { P.voice = on ? {} : { ...VOICE_ON }; }) }, on ? "Голос улучшен ✓" : "Улучшить голос"),
+        h("button.btn.sm", { onclick: () => { voiceOpen = !voiceOpen; renderPanel(); } }, voiceOpen ? "Скрыть настройку" : "Тонкая настройка")),
+      voiceOpen ? [
+        ...VOICE.map(([k, label, min]) => slider(label, () => P.voice[k] || 0, (x) => { P.voice[k] = x; }, { min: min ?? 0, max: 1, def: 0, show: (x) => Math.round(x * 100) })),
+        h("button.check" + (v.dehum ? ".on" : ""), { onclick: () => ch(() => { v.dehum = v.dehum ? 0 : 50; }) }, h("i", {}, v.dehum ? icon("check", 14) : null), "Убрать гудение сети 50 Гц"),
+        h("button.check" + (v.lufs ? ".on" : ""), { onclick: () => ch(() => { v.lufs = v.lufs ? 0 : -14; }) }, h("i", {}, v.lufs ? icon("check", 14) : null), "Громкость как в соцсетях (−14 LUFS)")] : null,
+      h("p.hint", {}, on ? "Обработка голоса слышна в готовом видео; в превью звучит исходник." : "Одна кнопка — убирает гул и шум, делает голос разборчивее и ровнее. Слышно в готовом видео.")].flat().filter(Boolean);
   }
   // кадр пальцами на превью
   const ptrs = new Map(); let g0 = null;

@@ -22,7 +22,7 @@ export function buildJob(P, out, req) {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
     timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.frame ? { frame: c.frame } : {}) })),
-    grade: P.grade || {}, audio: { volume: P.volume ?? 1 },
+    grade: P.grade || {}, audio: { volume: P.volume ?? 1, ...(P.voice || {}) },
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
       ...(o.kind === "video" ? { clip: media, from: r3(o.from || 0) } : { path: P.images?.[image]?.path || "" }) })).filter((o) => o.kind === "video" || o.path) } : {}),

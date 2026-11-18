@@ -324,6 +324,10 @@ async function run(label, viewport, scale) {
   ok(await ed(() => { const r = [...window.__ed.sndEls.values()][0]; return r && r.ok && !r.el.paused && r.el.currentTime > 0.15; }), "музыка играет вместе с видео в превью");
   await page.click(".play"); await page.waitForTimeout(150);
   ok(await ed(() => [...window.__ed.sndEls.values()][0].el.paused), "и останавливается вместе с ним");
+  await page.click(".panel >> text=Улучшить голос");
+  ok(await ed(() => window.__ed.P.voice.denoise > 0 && window.__ed.P.voice.lufs === -14), "«Улучшить голос» одной кнопкой");
+  await page.click(".panel >> text=Тонкая настройка"); await page.locator('input[aria-label="Убрать шум (фон, вентилятор)"]').fill("0.7");
+  ok(await ed(() => window.__ed.P.voice.denoise) === 0.7, "тонкая настройка голоса");
   await shot("7k-sound");
   await page.click(".panel-head >> text=Готово");
 
@@ -364,6 +368,7 @@ async function run(label, viewport, scale) {
   ok(job.subs.lines.some((l) => l.style?.layer === 1), "слой субтитра ушёл сборщику");
   ok(job.overlays?.length === 1 && job.overlays[0].path === "Для монтажа ПАК/Стикеры/Звезда.png" && job.overlays[0].in === "pop" && !job.overlays[0].image, "наложение ушло сборщику (путь к картинке в MEGA)");
   ok(job.subs.lines.some((l) => l.layer >= 100 && l.style.in === "type" && l.words.some((w) => w.br)), "титр ушёл сборщику вместе со своим стилем");
+  ok(job.audio.denoise === 0.7 && job.audio.comp > 0, "обработка голоса ушла сборщику");
   ok(job.sounds?.length === 1 && job.sounds[0].path === "Для монтажа ПАК/Музыка/Спокойная.webm" && job.sounds[0].volume === 0.4 && job.sounds[0].duck, "музыка ушла сборщику (путь в MEGA, громкость, приглушение)");
   ok(job.subs.masks?.length === 1 && job.subs.masks[0].shape === "ellipse" && job.subs.masks[0].start === 0, "маска клипа ушла сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
