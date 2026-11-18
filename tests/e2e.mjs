@@ -121,6 +121,14 @@ async function run(label, viewport, scale) {
   const p1 = await px();
   ok(p1[0] + p1[1] + p1[2] > p0[0] + p0[1] + p0[2] + 8, `цвет: экспозиция делает кадр светлее (${p0.slice(0, 3)} → ${p1.slice(0, 3)})`);
   await shot("7-color");
+  // «Мои»: сохранить настройку цвета под своим именем и применить одним нажатием
+  await page.click(".mine-add"); await page.fill(".sheet input.field", "Мой тёплый"); await page.click(".sheet >> text=Готово"); await page.waitForTimeout(300);
+  const exp0 = await ed(() => window.__ed.P.grade.exposure);
+  await page.click(".panel-head >> text=Сбросить"); await page.waitForTimeout(100);
+  ok(!(await ed(() => window.__ed.P.grade.exposure)), "цвет сброшен");
+  await page.click('.mine-c[data-my="Мой тёплый"]'); await page.waitForTimeout(150);
+  ok(await ed(() => window.__ed.P.grade.exposure) === exp0 && await page.evaluate(() => JSON.parse(localStorage.getItem("studio.my")).color.length === 1), "«Мои»: сохранённый цвет применяется одним нажатием (есть во всех видео)");
+  await shot("7m-mine");
   await page.click(".panel .seg >> text=Оттенки"); await page.waitForSelector(".bands");
   await page.click(".panel .seg >> text=Детали");
   await page.locator('input[aria-label="Чёткость"]').fill("0.6"); await page.locator('input[aria-label="Резкость"]').fill("0.5");
@@ -425,8 +433,8 @@ async function run(label, viewport, scale) {
   await page.click(".full-btn"); await page.waitForTimeout(400);
   const cw1 = (await page.locator(".view canvas").first().boundingBox()).height;
   ok(await page.locator(".ed.full").count() === 1 && !(await page.locator(".tl").isVisible()) && cw1 > cw0 * 1.1, `на весь экран: только видео, оно больше (${Math.round(cw0)} → ${Math.round(cw1)})`);
-  await ed(() => window.__ed.seek(1)); await page.click(".fs-ctl .fs-play"); await page.waitForTimeout(1000);
-  ok(await ed(() => window.__ed.playing) && await ed(() => window.__ed.t) > 1.1, "на весь экране видео играет");
+  await ed(() => window.__ed.seek(1)); await page.click(".fs-ctl .fs-play");
+  ok(await page.waitForFunction(() => window.__ed.playing && window.__ed.t > 1.1, null, { timeout: 5000 }).then(() => true, () => false), "на весь экране видео играет");
   await page.mouse.click(10, 10); await page.waitForTimeout(150);   // кнопки ещё видны (прячутся через 2,5 с) — касание ставит паузу
   ok(!(await ed(() => window.__ed.playing)), "касание по видео — пауза");
   await shot("16-full");

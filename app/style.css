@@ -324,3 +324,10 @@ textarea.txt { font-size: 17px; }
 .fs-time { color: #fff; font-variant-numeric: tabular-nums; font-size: 14px; white-space: nowrap; }
 .fs-seek { flex: 1; min-width: 60px; }
 .fs-ctl .chip { white-space: nowrap; }
+/* «Мои» — свои сохранённые настройки вкладки */
+.mine { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; align-items: center; margin: 2px 0 10px; padding-bottom: 2px; }
+.mine::-webkit-scrollbar { display: none; }
+.mine-l { flex: none; font-size: 13px; color: var(--muted); margin-right: 2px; }
+.mine .chip { flex: none; min-height: 32px; font-size: 13px; white-space: nowrap; }
+.mine-c { background: var(--s2); } .mine-x { margin-left: 6px; color: var(--muted); padding: 0 2px; }
+.mine-add { color: var(--accent); background: none; border: 1px dashed var(--s3); } .mine-add:disabled { opacity: .4; }

@@ -11,7 +11,7 @@ import { cloud } from "./cloud.js";
 import { openLibrary, openOverlayPicker, openSoundPicker } from "./library.js";
 import { openExport } from "./export.js";
 import { LOOKS, scaleLook } from "./looks.js";
-import { favStar, favSort, easePicker } from "./fav.js";
+import { favStar, favSort, easePicker, mine } from "./fav.js";
 import { CURVES, clipLen, srcAt, outAt, rateAt, splitCurve, speedAt, VMIN, VMAX } from "./speed.mjs";
 import { pushProject, remoteNewer } from "./sync.js";
 import { openFast, Stream } from "./fastplay.mjs";
@@ -1227,7 +1227,33 @@ export async function openEditor(P, onExit) {
     return h("label.sl", {}, h("span.sl-top", {}, h("span", {}, label), h("button.sl-reset", { onclick: (e) => { e.preventDefault(); reset(); }, title: "Сбросить" }, val)), inp);
   }
   let colorTab = 0, band = 0;
+  // «Мои» в каждой вкладке: что сохранить и как применить (служебные поля — время, файл, слой — не трогаем)
+  const strip = (o, keys) => { if (!o) return null; const r = { ...o }; for (const k of keys) delete r[k]; return r; };
+  const OWN = ["id", "start", "end", "layer", "from", "media", "audio", "image", "img", "key", "kind", "src", "name", "text"];
+  function myFor(p) {
+    const c = target(), apply = (fn) => (d) => { begin(); fn(d); layout(); renderPanel(); draw(); save(); };
+    const find = (list, id) => list.find((x) => x.id === id);
+    switch (p) {
+      case "color": return ["color", () => (Object.keys(P.grade || {}).length ? { grade: P.grade, look: P.look || null } : null), apply((d) => { P.grade = d.grade || {}; if (d.look) P.look = d.look; else delete P.look; })];
+      case "frame": return c && ["frame", () => c.frame || null, apply((d) => { c.frame = d; })];
+      case "mask": return c && ["mask", () => (c.mask && c.mask.shape !== "none" ? c.mask : null), apply((d) => { c.mask = d; })];
+      case "speed": return c && ["speed", () => (c.curve || c.speed ? { speed: c.speed || null, curve: c.curve || null } : null), apply((d) => { delete c.speed; delete c.curve; if (d.curve) c.curve = d.curve; else if (d.speed) c.speed = d.speed; })];
+      case "transition": { const t0 = find(P.clips, trSel); return t0 && ["transition", () => t0.tr || null, apply((d) => { t0.tr = d; })]; }
+      case "subs": return P.subs && ["subs", () => P.subs.style, apply((d) => { P.subs.style = d; })];
+      case "text": { const x = find(P.texts, txtSel); return x && ["text", () => x.style, apply((d) => { x.style = d; })]; }
+      case "overlay": { const o = find(P.overlays, ovSel); return o && ["overlay", () => strip(o, OWN), apply((d) => { Object.assign(o, d); })]; }
+      case "cloud": { const o = find(P.clouds, cloudSel); return o && ["cloud", () => strip(o, OWN), apply((d) => { Object.assign(o, d); })]; }
+      case "sound": { const o = find(P.sounds, sndSel); return o ? ["sound", () => strip(o, OWN), apply((d) => { Object.assign(o, d); })]
+        : ["voice", () => (Object.keys(P.voice || {}).length ? P.voice : null), apply((d) => { P.voice = d; })]; }
+    }
+    return null;
+  }
   function renderPanel() {
+    renderPanel0();
+    const m = panel && myFor(panel), hd = side.querySelector(".panel-head");
+    if (m && hd) hd.after(mine(m[0], m[1], m[2], renderPanel));
+  }
+  function renderPanel0() {
     side.hidden = !panel;
     ed.classList.toggle("with-panel", !!panel);
     ed.dataset.panel = panel || "";   // выделение показываем только у того, что сейчас настраивается
