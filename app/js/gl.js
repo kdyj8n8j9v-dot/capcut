@@ -118,7 +118,8 @@ export function createRenderer(canvas) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, o.f); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, o.t, 0);
   };
   const src = tex(), A = target(), B = target(), C = target();
-  let last = null, lastFrame = null;
+  let last = null, lastFrame = null, fr0 = null;
+  const small = document.createElement("canvas"), sg = small.getContext("2d", { alpha: false });
   const pass = (pr, to, w, h, input, set) => {
     gl.bindFramebuffer(gl.FRAMEBUFFER, to ? to.f : null); gl.viewport(0, 0, w, h);
     gl.useProgram(pr.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, input); gl.uniform1i(pr.u("tex"), 0);
@@ -133,7 +134,19 @@ export function createRenderer(canvas) {
       if (!video || !sw) { last = null; gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
       gl.bindTexture(gl.TEXTURE_2D, src);
       if (frame == null || last !== video || lastFrame !== frame) {
-        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); } catch { return; }
+        const u0 = performance.now();
+        // в видеокарту — кадр размером с превью, а не целый 1080×1920 (или 4K): загрузка кадра — самое дорогое в превью,
+        // уменьшает браузер сам (быстро). Сколько точек исходника реально видно на экране — столько и берём.
+        fr0 = { ...FRAME_DEFAULT, ...fr };
+        const d = Math.min(1, Math.max(out.w / sw, out.h / sh) * (fr0.scale || 1) * Math.max(W / out.w, H / out.h) * 1.05);
+        let up = video;
+        if (d < 0.85 && sw * sh > 2.3e6) {   // только тяжёлые оригиналы (4K): для копии 1080p у Safari свой быстрый путь
+          const dw = Math.max(2, Math.ceil(sw * d)), dh = Math.max(2, Math.ceil(sh * d));
+          if (small.width !== dw || small.height !== dh) { small.width = dw; small.height = dh; }
+          try { sg.drawImage(video, 0, 0, dw, dh); up = small; } catch {}
+        }
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, up); } catch { return; }
+        if (window.__perfG) { gl.finish(); window.__perfG.push(performance.now() - u0); }
         last = video; lastFrame = frame;
       }
       fr = { ...FRAME_DEFAULT, ...fr }; g = { ...GRADE_DEFAULT, ...g };

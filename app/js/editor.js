@@ -177,7 +177,7 @@ export async function openEditor(P, onExit) {
       : [h("i.gv", { style: { left: "5%" } }), h("i.gv", { style: { left: "95%" } }), h("i.gl", { style: { top: "5%" } }), h("i.gl", { style: { top: "95%" } }), h("i.gv.c", { style: { left: "50%" } }), h("i.gl.c", { style: { top: "50%" } })]));
     const pad = scroll.clientWidth / 2;
     inner.style.padding = `0 ${pad}px`;
-    scroll.scrollLeft = t * pps;
+    tlSettle();
     draw();
   }
   const grab = ed.querySelector(".tl-grab"), tl = ed.querySelector(".tl");
@@ -238,16 +238,21 @@ export async function openEditor(P, onExit) {
   function draw() {
     if (!R || !alive) return;
     const loc = locate(t), rec = loc && vids.get(loc.clip.media);
+    const D = window.__perfD, q = () => D && performance.now(), a0 = q();
     if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade, playing && rec.rvfc ? rec.frame : null);
     else R.draw(null);
+    const a1 = q();
     const c2 = over.getContext("2d");
     c2.clearRect(0, 0, over.width, over.height);
     drawMaskCached(c2, over.width, over.height, loc && loc.clip.mask, newCv);
     poolN = 0; drawOverlays(c2, over.width, over.height, t, P.overlays, ovSource, makeCv, newCv);
     drawTransitions(c2, over.width, over.height, t, trList());
     drawClouds(c2, over.width, over.height, t, P.clouds);
+    const a2 = q();
     if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
+    const a3 = q();
     if (P.texts.length) drawSubs(c2, over.width, over.height, t, tlines(), {});
+    if (D) D.push([a1 - a0, a2 - a1, a3 - a2, q() - a3]);
   }
   function seek(time, fromScroll) {
     t = clamp(time, 0, total());
@@ -261,7 +266,7 @@ export async function openEditor(P, onExit) {
         if (Math.abs(rec.v.currentTime - want) > 0.005) rec.v.currentTime = want;
       }
     }
-    if (!fromScroll) scroll.scrollLeft = t * pps;
+    if (!fromScroll) tlSettle();
     tNow.textContent = fmtTime(t, true);
     syncOv(); syncSnd();
     draw();
@@ -286,8 +291,19 @@ export async function openEditor(P, onExit) {
     syncOv(); syncSnd();
     syncBar(); requestAnimationFrame(tick);
   }
-  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncOv(); syncSnd(); syncBar(); for (const k of vids.keys()) swapLight(k); }
+  function pause() { stopAt = null; if (!playing) return; playing = false; tlSettle(); for (const r of vids.values()) r.v.pause(); syncOv(); syncSnd(); syncBar(); for (const k of vids.keys()) swapLight(k); }
   function toggle() { playing ? pause() : play(); }
+  // таймлайн при воспроизведении едет как картинка на видеочипе (transform), а не прокруткой: на iPad прокрутку ведёт
+  // отдельный системный процесс, и команда «прокрутить» каждый кадр давала рывки и отставание дорожки
+  let flow = null;
+  function tlMove() {
+    if (!flow) { flow = { base: scroll.scrollLeft }; inner.style.willChange = "transform"; }
+    inner.style.transform = `translate3d(${(flow.base - t * pps).toFixed(1)}px,0,0)`;
+  }
+  function tlSettle() {
+    if (flow) { flow = null; inner.style.transform = ""; inner.style.willChange = ""; }
+    scroll.scrollLeft = t * pps;
+  }
   let hardAt = 0;
   function tick(now) {
     if (!playing || !alive) return;
@@ -318,15 +334,19 @@ export async function openEditor(P, onExit) {
     if (local >= len(c) - 0.015 || (rec && rec.v.ended)) {
       if (rec) rec.v.pause();
       pi++;
-      if (pi >= P.clips.length) { playing = false; t = total(); scroll.scrollLeft = t * pps; syncBar(); draw(); return; }
+      if (pi >= P.clips.length) { playing = false; t = total(); tlSettle(); syncBar(); draw(); return; }
       const n = P.clips[pi], nr = vids.get(n.media);
       t = startOf(pi);
       if (nr && nr.ok) { nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
     } else t = startOf(pi) + Math.max(0, local);
-    scroll.scrollLeft = t * pps;
+    const pf = window.__perf, p0 = pf && performance.now();
+    tlMove();
     tNow.textContent = fmtTime(t, true);
+    const p1 = pf && performance.now();
     syncOv(); syncSnd();
+    const p2 = pf && performance.now();
     draw();
+    if (pf) { const p3 = performance.now(); pf.push([p1 - p0, p2 - p1, p3 - p2, p0 - now]); }   // замер: прокрутка, синхронизация, рисование
     if (stopAt != null && t >= stopAt) return pause();
     requestAnimationFrame(tick);
   }
@@ -887,16 +907,16 @@ export async function openEditor(P, onExit) {
       tag.textContent = b.text + (b.p != null ? " " + Math.round(b.p * 100) + " %" : "…");
     }
   }
-  function zoom(k) { pps = clamp(pps * k, 3, 240); layout(); scroll.scrollLeft = t * pps; }
+  function zoom(k) { pps = clamp(pps * k, 3, 240); layout(); tlSettle(); }
   // при воспроизведении таймлайн крутит сама программа; паузу ставит только палец (или колесо), а не запоздавшее
   // событие прокрутки от iPad — раньше из-за него воспроизведение само останавливалось и дёргалось
   let userAt = 0;
   for (const ev of ["touchstart", "touchmove", "pointerdown", "wheel"]) scroll.addEventListener(ev, () => { userAt = performance.now(); }, { passive: true });
   scroll.addEventListener("scroll", () => {
     if (drag) return;
+    if (playing && (flow || performance.now() - userAt > 1200)) { if (flow && performance.now() - userAt < 300) pause(); return; }
     const ts = scroll.scrollLeft / pps;
     if (Math.abs(ts - t) * pps < 1.5) return;
-    if (playing && performance.now() - userAt > 1200) return;
     if (playing) pause();
     seek(ts, true);
   });
@@ -907,7 +927,7 @@ export async function openEditor(P, onExit) {
     if (pinch && e.touches.length === 2) {
       e.preventDefault();
       const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-      pps = clamp(pinch.pps * d / pinch.d, 3, 240); layout(); scroll.scrollLeft = t * pps;
+      pps = clamp(pinch.pps * d / pinch.d, 3, 240); layout(); tlSettle();
     } else if (drag) e.preventDefault();
   }, { passive: false });
   scroll.addEventListener("touchend", () => { pinch = null; }, { passive: true });
