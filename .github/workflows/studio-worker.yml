@@ -17,30 +17,45 @@ jobs:
       MEGA_PASSWORD: ${{ secrets.MEGA_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
-      - name: ffmpeg, MEGAcmd, python
+      # быстрый путь: программы лежат в кэше GitHub и ставятся оттуда за секунды, без медленных зеркал;
+      # сеть нужна только при первом запуске или когда кэш устарел (тогда он пересобирается сам)
+      - uses: actions/cache/restore@v4
+        with: { path: "~/tools", key: "tools-ubuntu24-v1-${{ github.run_id }}", restore-keys: "tools-ubuntu24-v1-" }
+      - id: tools
+        name: ffmpeg, MEGAcmd, python
         timeout-minutes: 20
         run: |
-          # каждая установка — с жёстким ограничением по времени (timeout под sudo, SIGKILL через 10 с) и повтором;
-          # если зеркало Ubuntu у GitHub (azure) не отвечает — переключаемся на archive.ubuntu.com
-          APT="-o Acquire::Retries=2 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 -o DPkg::Lock::Timeout=60"
-          mirror() {
-            echo "зеркало Ubuntu не отвечает — переключаюсь на archive.ubuntu.com"
-            [ -f /etc/apt/apt-mirrors.txt ] && printf 'http://archive.ubuntu.com/ubuntu/\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
-            sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-          }
-          up() { echo "apt update…"; sudo timeout -k 10 150 apt-get $APT update -qq; }
-          inst() { echo "установка: $*"; sudo timeout -k 10 420 apt-get $APT install -y -qq "$@" >/dev/null; }
-          retry() { local t=$1; shift; for i in 1 2 3; do timeout -k 10 "$t" "$@" && return 0; echo "не вышло, повтор $i: $1 $2"; sleep 5; done; return 1; }
-          up || { mirror; up; } || { sleep 20; up; }
-          inst ffmpeg || { mirror; up; inst ffmpeg; }
-          # 10 бит 4:2:2 должен кодироваться — иначе не тратим время
-          ffmpeg -v error -f lavfi -i testsrc=s=64x64:d=0.1 -pix_fmt yuv422p10le -c:v libx265 -profile:v main422-10 -f null -
-          . /etc/os-release
-          retry 150 curl -sSfL --connect-timeout 20 -o /tmp/mega.deb "https://mega.nz/linux/repo/xUbuntu_${VERSION_ID}/amd64/megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
-          inst /tmp/mega.deb || { mirror; up; inst /tmp/mega.deb; }
-          retry 300 pip install -q numpy opencv-python-headless faster-whisper
-          retry 180 npm install --no-save --silent @napi-rs/canvas   # субтитры и наложения рисует тот же код, что и превью в приложении
+          T=~/tools; mkdir -p $T/debs $T/pip $T/npm
+          ok() { ffmpeg -v error -f lavfi -i testsrc=s=64x64:d=0.1 -pix_fmt yuv422p10le -c:v libx265 -profile:v main422-10 -f null - 2>/dev/null && command -v mega-put >/dev/null; }
+          if ls $T/debs/*.deb >/dev/null 2>&1 && sudo timeout -k 10 180 dpkg -i $T/debs/*.deb >/dev/null 2>&1 && ok; then
+            echo "программы из кэша"
+          else
+            # медленный путь: сеть. Жёсткие тайм-ауты; если зеркало GitHub (azure) не отвечает — archive.ubuntu.com
+            echo "кэша нет или он устарел — качаю"; echo "fresh=1" >> "$GITHUB_OUTPUT"
+            rm -f $T/debs/*.deb
+            APT="-o Acquire::Retries=2 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 -o DPkg::Lock::Timeout=60"
+            mirror() {
+              echo "зеркало Ubuntu не отвечает — переключаюсь на archive.ubuntu.com"
+              [ -f /etc/apt/apt-mirrors.txt ] && printf 'http://archive.ubuntu.com/ubuntu/\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+              sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+            }
+            up() { echo "apt update…"; sudo timeout -k 10 90 apt-get $APT update -qq; }
+            inst() { echo "установка: $*"; sudo timeout -k 10 420 apt-get $APT install -y -qq "$@" >/dev/null; }
+            . /etc/os-release
+            timeout -k 10 150 curl -sSfL --retry 3 --connect-timeout 20 -o $T/debs/megacmd.deb "https://mega.nz/linux/repo/xUbuntu_${VERSION_ID}/amd64/megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
+            up || { mirror; up; } || { sleep 10; up; }
+            sudo timeout -k 10 300 apt-get $APT -f install -y -qq >/dev/null 2>&1 || true   # если кэш поставился наполовину
+            inst ffmpeg $T/debs/megacmd.deb || { mirror; up; inst ffmpeg $T/debs/megacmd.deb; }
+            cp /var/cache/apt/archives/*.deb $T/debs/ 2>/dev/null || true   # всё, что скачали, — в кэш на следующий раз
+            ok || { echo "ffmpeg не кодирует 10 бит 4:2:2 или нет MEGAcmd" >&2; exit 1; }
+          fi
+          timeout -k 10 600 pip install -q --cache-dir $T/pip numpy opencv-python-headless faster-whisper
+          timeout -k 10 300 npm install --no-save --silent --cache $T/npm @napi-rs/canvas   # субтитры и наложения рисует тот же код, что и превью
           echo "установлено"
+      # новый кэш сохраняется сразу (и только когда программы качались заново), чтобы следующий запуск шёл быстрым путём
+      - if: steps.tools.outputs.fresh == '1'
+        uses: actions/cache/save@v4
+        with: { path: "~/tools", key: "tools-ubuntu24-v1-${{ github.run_id }}" }
       - uses: actions/cache@v4
         with: { path: ~/.cache/huggingface, key: whisper-large-v3-turbo }
       - name: run
