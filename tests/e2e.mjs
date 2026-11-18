@@ -143,6 +143,15 @@ async function run(label, viewport, scale) {
   await page.click(".panel .tiles >> text=1×");
   ok(Math.abs(await ed(() => window.__ed.total()) - T0) < 0.02 && !(await ed(() => window.__ed.P.clips[0].speed)), "скорость возвращается к 1×");
   await page.click(".panel-head >> text=Готово");
+  // переход на стыке клипов
+  await page.evaluate(() => document.querySelector(".tl-ruler").click());   // снять выделение клипа
+  await page.click(".trb");
+  await page.click(".panel .tiles >> text=Затемнение"); await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 8000 });
+  ok(await ed(() => window.__ed.P.clips[0].tr?.kind) === "black", "переход «Затемнение» на стыке клипов");
+  await ed(() => window.__ed.seek(window.__ed.trList()[0].at)); await page.waitForTimeout(250);
+  ok(await page.evaluate(() => { const c = document.querySelector("canvas.over"); return c.getContext("2d").getImageData(c.width >> 1, c.height >> 1, 1, 1).data[3]; }) > 240, "на стыке кадр закрыт переходом");
+  await shot("9d-transition");
+  await page.click(".panel-head >> text=Готово");
 
   // субтитры
   await page.click('[data-tool=subs]');
@@ -384,6 +393,7 @@ async function run(label, viewport, scale) {
   const job = await page.evaluate(async () => { const k = Object.keys(window.__fakeFiles).find((x) => x.includes("/jobs/")); return JSON.parse(await window.__fakeFiles[k].text()); });
   const d2 = await page.evaluate(() => window.__fakeLog.find((l) => l.startsWith("dispatch export")));
   ok(job.deliver === "device", "сборщику передано: положить для устройства");
+  ok(job.subs.transitions?.[0]?.kind === "black", "переход ушёл сборщику");
   ok(job.output.w === 2160 && job.output.h === 3840 && job.timeline.length === 2 && job.grade.exposure === 0.8 && Object.values(job.clips)[0].file.startsWith("#"), "проект для сборщика лёг в MEGA: 4K, клипы, цвет, имена хешем");
   ok(job.subs && job.subs.lines.length >= 2 && job.subs.lines[0].words[0].text && job.subs.style.font, "субтитры ушли сборщику вместе с проектом");
   ok(job.subs.fonts?.[0]?.path === "Для монтажа ПАК/Шрифты/Мой шрифт.ttf", "сборщику передан путь к своему шрифту в MEGA");

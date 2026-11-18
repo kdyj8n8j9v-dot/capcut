@@ -16,6 +16,7 @@ export function buildJob(P, out, req) {
   const style = normStyle(P.subs?.style), lines = [...(P.subs?.on ? buildLines(P.clips, P.words || {}, style) : []), ...textLines(P.texts)];   // субтитры + титры
   const dur = P.clips.reduce((x, c) => x + clipLen(c), 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
   const masks = []; { let at = 0; for (const c of P.clips) { const len = clipLen(c); if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
+  const trs = []; { let at = 0; P.clips.forEach((c, i) => { at += clipLen(c); if (c.tr && c.tr.kind !== "none" && i < P.clips.length - 1) trs.push({ at: r3(at), kind: c.tr.kind, dur: c.tr.dur || 0.5 }); }); }
   // свои шрифты (общий, отдельных строк и слов): сборщик возьмёт те же файлы из MEGA
   const names = new Set([style.font, ...lines.flatMap((l) => [l.style?.font, ...l.words.map((w) => w.style?.font)])].filter((n) => n && !FONTS[n]));
   const pf = [...names].map(packFont).filter(Boolean).map((f) => ({ name: f.name, path: f.path + "/" + f.file }));
@@ -27,7 +28,7 @@ export function buildJob(P, out, req) {
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
       ...(o.kind === "video" ? { clip: media, from: r3(o.from || 0) } : { path: P.images?.[image]?.path || "" }) })).filter((o) => o.kind === "video" || o.path) } : {}),
-    ...(lines.length || clouds.length || masks.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(masks.length ? { masks } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.br ? { br: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
+    ...(lines.length || clouds.length || masks.length || trs.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(masks.length ? { masks } : {}), ...(trs.length ? { transitions: trs } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.br ? { br: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
   };
 }
 const STEPS = [["send", "Отправляю проект"], ["queued", "Жду свободный сборщик"], ["setup", "Сборщик готовится"], ["work", "Собираю видео в 4K"], ["done", "Готово"]];

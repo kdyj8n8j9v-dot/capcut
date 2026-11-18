@@ -196,6 +196,28 @@ export function drawMaskCached(ctx, W, H, m, make) {
   return true;
 }
 
+// Переходы на стыке клипов: закрывают кадр и открывают следующий (рисуются поверх видео, в общем слое).
+export const TRANSITIONS = [["none", "Нет"], ["black", "Затемнение"], ["white", "Вспышка"], ["wipe", "Шторка"], ["iris", "Круг"], ["blinds", "Жалюзи"], ["bars", "Кино-полосы"]];
+// list: [{ at — секунда стыка, kind, dur }]
+export function drawTransitions(ctx, W, H, t, list) {
+  let any = false;
+  for (const x of list || []) {
+    const d = Math.max(0.05, x.dur || 0.5), p = (t - (x.at - d / 2)) / d;
+    if (p <= 0 || p >= 1 || !x.kind || x.kind === "none") continue;
+    const c0 = 1 - Math.abs(2 * p - 1), c = c0 * c0 * (3 - 2 * c0);   // 0 → 1 (стык) → 0
+    ctx.save();
+    ctx.fillStyle = x.kind === "white" ? "#ffffff" : x.color || "#000000";
+    if (x.kind === "black" || x.kind === "white") { ctx.globalAlpha = c; ctx.fillRect(0, 0, W, H); }
+    else if (x.kind === "wipe") { const e = p < 0.5 ? c : 1; const x0 = p < 0.5 ? 0 : W * (1 - c); ctx.fillRect(x0, 0, p < 0.5 ? W * e : W - x0, H); }
+    else if (x.kind === "iris") { const R = Math.hypot(W, H) / 2 * (1 - c); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.arc(W / 2, H / 2, Math.max(0.5, R), 0, Math.PI * 2, true); ctx.fill("evenodd"); }
+    else if (x.kind === "blinds") { const n = 8, bh = H / n; for (let i = 0; i < n; i++) ctx.fillRect(0, i * bh, W, bh * c + 0.5); }
+    else if (x.kind === "bars") { const bh = H / 2 * c; ctx.fillRect(0, 0, W, bh); ctx.fillRect(0, H - bh, W, bh); }
+    ctx.restore();
+    any = true;
+  }
+  return any;
+}
+
 function rgba(hex, a) {
   const n = parseInt((hex || "#000000").slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;

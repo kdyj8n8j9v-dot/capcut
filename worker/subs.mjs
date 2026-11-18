@@ -5,15 +5,15 @@ import fs from "fs";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
-import { drawSubs, drawClouds, drawMaskCached, band, FONTS } from "../app/js/subs.mjs";
+import { drawSubs, drawClouds, drawMaskCached, drawTransitions, band, FONTS } from "../app/js/subs.mjs";
 import { drawOverlays } from "../app/js/overlays.mjs";
 
 const [, , proj, out, fpsS, Ws, Hs, Ns] = process.argv;
 const W = +Ws, H = +Hs, N = +Ns, [fn, fd] = fpsS.split("/").map(Number), fps = fn / (fd || 1);
-const { style, lines = [], fonts, clouds = [], masks = [], overlays = [] } = JSON.parse(fs.readFileSync(proj, "utf8")).subs;
+const { style, lines = [], fonts, clouds = [], masks = [], overlays = [], transitions = [] } = JSON.parse(fs.readFileSync(proj, "utf8")).subs;
 for (const f of fonts || []) if (f.file && fs.existsSync(f.file)) GlobalFonts.registerFromPath(f.file, f.name);   // свой шрифт владельца из MEGA
 for (const [name, file] of Object.entries(FONTS)) GlobalFonts.registerFromPath(fileURLToPath(new URL("../app/fonts/" + file, import.meta.url)), name);
-const b = masks.length || overlays.length ? { y: 0, h: H } : band(W, H, style, lines, clouds);   // маска и наложения — весь кадр
+const b = masks.length || overlays.length || transitions.length ? { y: 0, h: H } : band(W, H, style, lines, clouds);   // маска и наложения — весь кадр
 const cv = createCanvas(W, b.h), ctx = cv.getContext("2d");
 const ff = spawn("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${W}x${b.h}`, "-r", fpsS, "-i", "-", "-c:v", "qtrle", "-pix_fmt", "argb", out], { stdio: ["pipe", "inherit", "inherit"] });
 const done = new Promise((res, rej) => ff.on("close", (c) => c ? rej(new Error("ffmpeg " + c)) : res()));
@@ -61,7 +61,8 @@ for (let n = 0; n < N; n++) {
     if (!on && f && n / fps >= o.end) { f.close(); srcs.set(o, null); }
   }
   const cO = drawOverlays(ctx, W, H, n / fps, overlays, (o) => { const s = ovSrc(o); return s && s.src ? s.src : s; }, make);
-  const c1 = drawClouds(ctx, W, H, n / fps, clouds), c2 = drawSubs(ctx, W, H, n / fps, lines, style), any = c0 || cO || c1 || c2;
+  const cT = drawTransitions(ctx, W, H, n / fps, transitions);   // переход закрывает видео и наложения, но не текст
+  const c1 = drawClouds(ctx, W, H, n / fps, clouds), c2 = drawSubs(ctx, W, H, n / fps, lines, style), any = c0 || cO || cT || c1 || c2;
   ctx.restore();
   const buf = any ? Buffer.from(ctx.getImageData(0, 0, W, b.h).data.buffer) : blank;
   if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once("drain", r));

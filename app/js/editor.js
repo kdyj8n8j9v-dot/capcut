@@ -4,7 +4,7 @@ import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
 import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage, audioUrl, ensureAudio } from "./media.js";
 import { drawOverlays, ovAt, OV_DEFAULT, OV_IN, OV_OUT, OV_LOOP } from "./overlays.mjs";
-import { buildLines, drawSubs, drawClouds, drawMaskCached, textLines, TEXT_DEFAULT, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
+import { buildLines, drawSubs, drawClouds, drawMaskCached, drawTransitions, TRANSITIONS, textLines, TEXT_DEFAULT, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
 import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
@@ -220,6 +220,7 @@ export async function openEditor(P, onExit) {
     c2.clearRect(0, 0, over.width, over.height);
     drawMaskCached(c2, over.width, over.height, loc && loc.clip.mask, newCv);
     poolN = 0; drawOverlays(c2, over.width, over.height, t, P.overlays, ovSource, makeCv, newCv);
+    drawTransitions(c2, over.width, over.height, t, trList());
     drawClouds(c2, over.width, over.height, t, P.clouds);
     if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
     if (P.texts.length) drawSubs(c2, over.width, over.height, t, tlines(), {});
@@ -779,6 +780,10 @@ export async function openEditor(P, onExit) {
     const marks = [];
     for (let s = 0; s <= tot + 1e-6; s += step) marks.push(h("span", { style: { left: s * pps + "px" } }, step < 1 ? fmtTime(s, true) : fmtTime(s)));
     ruler.replaceChildren(...marks); ruler.style.width = tot * pps + "px";
+    // значки переходов на стыках клипов
+    let at = 0;
+    const si = P.clips.findIndex((c) => c.id === sel);   // у выделенного клипа края тянутся — значки рядом прячем
+    P.clips.forEach((c, i) => { at += len(c); if (i < P.clips.length - 1 && i !== si && i !== si - 1) track.append(h("button.trb" + (c.tr && c.tr.kind !== "none" ? ".on" : "") + (trSel === c.id ? ".sel" : ""), { "data-id": c.id, "aria-label": "Переход", style: { left: at * pps + "px" } }, c.tr && c.tr.kind !== "none" ? "◆" : "◇")); });
     relines(); layoutClouds(); layoutOvs(); layoutSnds(); layoutTexts(); layoutBusy(); syncBar();
   }
   function layoutBusy() {
@@ -814,11 +819,13 @@ export async function openEditor(P, onExit) {
   // касания клипов: выбор, края (обрезка), долгое нажатие (перестановка)
   let drag = null, press = null;
   track.addEventListener("click", (e) => {
+    const tb = e.target.closest(".trb");
+    if (tb) { e.stopPropagation(); trSel = tb.dataset.id; pause(); const i = P.clips.findIndex((c) => c.id === trSel); seek(Math.max(0, startOf(i + 1) - 0.6)); panel = "transition"; renderPanel(); syncBar(); layout(); requestAnimationFrame(fit); return; }
     if (drag || track.dataset.justDragged) return;
     const el = e.target.closest(".clip");
     if (!el) return;
     sel = sel === el.dataset.id ? null : el.dataset.id;
-    for (const c of track.querySelectorAll(".clip")) c.classList.toggle("sel", c.dataset.id === sel);
+    layout();   // заново: у выделенного клипа края, значки переходов рядом прячутся
     syncBar();
   });
   scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow || e.target === sndRow || e.target === txtRow) { sel = null; layout(); } });
@@ -1000,6 +1007,19 @@ export async function openEditor(P, onExit) {
       }
       subApi.slider = slider; subApi.head = head;
       side.replaceChildren(...subsPanel(subApi).flat(9).filter(Boolean));
+    } else if (panel === "transition") {
+      const i = P.clips.findIndex((c) => c.id === trSel), c = P.clips[i];
+      if (!c || i >= P.clips.length - 1) return side.replaceChildren(head("Переход"), h("p.hint", {}, "Нажмите на значок ◇ между клипами на дорожке."));
+      const tr = c.tr || { kind: "none", dur: 0.6 };
+      const ch = (fn) => { begin(); fn(); layout(); renderPanel(); save(); preview(); };
+      const preview = () => { const s0 = startOf(i + 1); pause(); seek(Math.max(0, s0 - (c.tr?.dur || 0.6) / 2 - 0.4)); stopAt = Math.min(total(), s0 + (c.tr?.dur || 0.6) / 2 + 0.4); play(); };
+      side.replaceChildren(head("Переход"),
+        h("p.hint", {}, `Между клипами ${i + 1} и ${i + 2}. Переход закрывает кадр и открывает следующий; текст и субтитры остаются поверх.`),
+        h("div.tiles", {}, TRANSITIONS.map(([k, n]) => h("button" + (tr.kind === k ? ".on" : ""), { onclick: () => ch(() => { if (k === "none") delete c.tr; else c.tr = { ...tr, kind: k }; }) }, n))),
+        tr.kind !== "none" ? slider("Длительность", () => c.tr.dur || 0.6, (v) => { c.tr.dur = v; draw(); }, { min: 0.2, max: 2, def: 0.6, show: (v) => v.toFixed(1).replace(".", ",") + " с" }) : null,
+        tr.kind !== "none" ? h("div.row-btns", {}, h("button.btn.sm", { onclick: preview }, "Показать"),
+          h("button.btn.sm", { onclick: () => ch(() => { P.clips.forEach((x, k) => { if (k < P.clips.length - 1) x.tr = { ...c.tr }; }); }) }, "Применить ко всем стыкам")) : null);
+      side.querySelector("input[type=range]")?.addEventListener("change", () => { save(); preview(); });
     } else if (panel === "speed") {
       const c = target(); shown = c?.id;
       if (!c) return side.replaceChildren(head("Скорость"), h("p.muted", {}, "Добавьте видео."));
@@ -1122,6 +1142,9 @@ export async function openEditor(P, onExit) {
           : [P.sounds.length ? h("p.hint", {}, "Чтобы изменить звук, нажмите на него на дорожке внизу.") : h("p.hint", {}, "Фоновая музыка или звуковой эффект из «Для монтажа ПАК» или с устройства. Музыка сама встанет тише и будет приглушаться под голос.")]));
     }
   }
+  // ——— переходы: стыки клипов (переход хранится у клипа слева: clip.tr)
+  let trSel = null;
+  function trList() { const out = []; let at = 0; P.clips.forEach((c, i) => { at += len(c); if (c.tr && c.tr.kind !== "none" && i < P.clips.length - 1) out.push({ at, kind: c.tr.kind, dur: c.tr.dur || 0.6 }); }); return out; }
   // ——— кривая скорости: маленький график шаблона и редактор точек
   let speedTab = 0;
   const ly = (v) => Math.log(v / VMIN) / Math.log(VMAX / VMIN);   // скорость → высота (логарифмическая шкала)
@@ -1273,5 +1296,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }

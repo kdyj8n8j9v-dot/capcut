@@ -257,6 +257,9 @@ textarea.txt { font-size: 17px; }
 .tiles.curves button { display: flex; align-items: center; gap: 8px; text-align: left; } .tiles.curves .cv { color: var(--sel); flex: none; display: inline-flex; }
 .tiles.curves button.on .cv { color: var(--accent); }
 .curve-box { margin: 4px 0 8px; } canvas.curve { width: 100%; height: auto; aspect-ratio: 2 / 1; border-radius: 12px; background: #111113; touch-action: none; display: block; }
+.tl-track { position: relative; }
+.trb { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 6px; background: #fff; color: #000; font-size: 12px; line-height: 22px; text-align: center; z-index: 3; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
+.trb.on { background: var(--sel); } .trb.sel { box-shadow: 0 0 0 2px var(--accent); }
 .tl-add { flex: none; width: 56px; height: 56px; margin-left: 10px; border-radius: 10px; background: var(--s2); display: grid; place-items: center; color: var(--accent); }
 .tl-head { position: absolute; left: 50%; top: 12px; bottom: 4px; width: 2px; margin-left: -1px; border-radius: 1px; background: #fff; pointer-events: none; box-shadow: 0 0 4px rgba(0,0,0,.8); z-index: 6; }
 

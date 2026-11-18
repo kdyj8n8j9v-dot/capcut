@@ -326,7 +326,7 @@ def render(project, out, draft=False):
         ovs.append(o)
     if ovs:
         layer["overlays"] = ovs
-    if layer.get("lines") or layer.get("clouds") or layer.get("masks") or layer.get("overlays"):
+    if layer.get("lines") or layer.get("clouds") or layer.get("masks") or layer.get("overlays") or layer.get("transitions"):
         # subtitles: the app's own drawing code renders a transparent strip (worker/subs.mjs); it is laid over the graded
         # picture already in 10-bit 4:2:2, so the grade never touches the text and the video stays 10-bit
         sub = work / "subs.mov"
