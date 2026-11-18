@@ -299,12 +299,19 @@ export async function openEditor(P, onExit) {
     const step = Math.min(dt, 0.1), expect = t - startOf(pi) + step;
     local = expect;
     if (rec && rec.ok) {
-      const v = rec.v;
-      setRate(v, rateAt(c, expect));
+      const v = rec.v, r = rateAt(c, expect);
+      setRate(v, r);
       if (!v.seeking && v.readyState >= 2) {
-        const d = outAt(c, v.currentTime) - expect;
-        if (Math.abs(d) > 0.35 && now - hardAt > 700) { hardAt = now; v.currentTime = Math.min(srcAt(c, expect), c.out - 0.001); }   // отстало сильно — перескочить (не чаще раза в 0,7 с)
-        else if (Math.abs(d) > 0.08) local = expect + clamp(d * 0.04, -0.1 * step, 0.1 * step);   // чуть-чуть — часы мягко (не больше 10 %) подтягиваются к видео
+        // отставание — в секундах исходника (на 8× 0,1 с таймлайна — почти секунда не того кадра). Обычная задержка показа
+        // видео — 1–2 кадра экрана, т. е. на 4× около 0,2 с исходника: это не трогаем, иначе перескоки только мешают
+        const ds = v.currentTime - srcAt(c, expect);
+        if (Math.abs(ds) > Math.max(0.35, 0.12 * r) && now - hardAt > 500) {
+          hardAt = now;   // видео не успевает — перескочить вперёд, с запасом на сам перескок (на большой скорости — больше)
+          v.currentTime = Math.min(srcAt(c, Math.min(expect + (r > 4 ? 0.25 : 0.1), len(c))), c.out - 0.001);
+        } else {
+          const d = outAt(c, v.currentTime) - expect;
+          if (Math.abs(d) > 0.04) local = expect + clamp(d * 0.04, -0.1 * step, 0.1 * step);   // часы мягко (не больше 10 %) подтягиваются к видео
+        }
       }
       if (v.paused && !v.ended && !v.seeking) v.play().catch(() => {});
     }   // нет копии — чёрный кадр, время идёт
@@ -1511,5 +1518,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, srcAt, pause, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
+  window.__ed = { P, seek, srcAt, rateAt, pause, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
 }
