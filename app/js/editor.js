@@ -10,6 +10,8 @@ import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
 import { openLibrary, openOverlayPicker, openSoundPicker } from "./library.js";
 import { openExport } from "./export.js";
+import { LOOKS, scaleLook } from "./looks.js";
+import { favStar, favSort, easePicker } from "./fav.js";
 import { CURVES, clipLen, srcAt, outAt, rateAt, splitCurve, speedAt, VMIN, VMAX } from "./speed.mjs";
 import { pushProject, remoteNewer } from "./sync.js";
 
@@ -112,16 +114,17 @@ export async function openEditor(P, onExit) {
   const redoBtn = h("button.round", { onclick: () => restore(redo, undo), "aria-label": "Вернуть" }, icon("redo", 20));
   const tool = (id, ic, label, fn) => h("button.tool", { "data-tool": id, onclick: fn }, icon(ic), h("span", {}, label));
   const tools = h("nav.tools", {},
-    tool("media", "plus", "Медиа", addMedia), tool("overlay", "layers", "Наложение", () => openPanel("overlay")), tool("split", "split", "Разрезать", split),
+    tool("media", "plus", "Медиа", addMedia), tool("quick", "magic", "Быстро", () => openPanel("quick")), tool("text", "type", "Текст", () => openPanel("text")), tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("overlay", "layers", "Наложение", () => openPanel("overlay")),
     tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("speed", "speed", "Скорость", () => openPanel("speed")), tool("mask", "mask", "Маска", () => openPanel("mask")), tool("color", "color", "Цвет", () => openPanel("color")),
-    tool("text", "type", "Текст", () => openPanel("text")), tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
+    tool("cloud", "cloud", "Облако", () => openPanel("cloud")));
+  const acts = h("div.acts", {}, h("button.round.act", { "data-tool": "split", onclick: split, "aria-label": "Разрезать" }, icon("split", 20)), h("button.round.act.act-del", { "data-tool": "delete", onclick: remove, "aria-label": "Удалить" }, icon("trash", 18)));
   const ed = h("div.ed", {},
     h("header.bar", {},
       h("button.link", { onclick: exit }, icon("back", 20), "Проекты"), titleBtn,
       h("div.bar-right", {}, undoBtn, redoBtn, fmtBtn, h("button.btn.primary", { onclick: doExport }, icon("share", 18), "Экспорт"))),
     h("div.stage", {}, view, side),
     h("div.transport", {}, h("div.times", {}, tNow, h("span.muted", {}, " / "), tAll), playBtn,
-      h("div.zoom", {}, h("button.round", { onclick: () => zoom(1 / 1.5), "aria-label": "Мельче" }, icon("zoomout", 18)),
+      h("div.zoom", {}, acts, h("button.round", { onclick: () => zoom(1 / 1.5), "aria-label": "Мельче" }, icon("zoomout", 18)),
         h("button.round", { onclick: () => zoom(1.5), "aria-label": "Крупнее" }, icon("zoomin", 18)))),
     h("div.tl", {}, h("div.tl-grab", { title: "Потяните, чтобы изменить высоту дорожек" }), scroll, h("div.tl-head")),
     tools);
@@ -131,10 +134,11 @@ export async function openEditor(P, onExit) {
     undoBtn.disabled = !undo.length; redoBtn.disabled = !redo.length;
     const none = !P.clips.length;
     empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = none;
-    for (const b of tools.children) {
+    for (const b of [...tools.children, ...acts.children]) {
       const id = b.dataset.tool;
       b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel) && !(panel === "sound" && sndSel) && !(panel === "text" && txtSel);
       b.classList.toggle("on", id === panel);
+      if (id === panel && b.scrollIntoView && tools.scrollWidth > tools.clientWidth) b.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     tAll.textContent = fmtTime(total());
     tNow.textContent = fmtTime(t, true);
@@ -540,7 +544,7 @@ export async function openEditor(P, onExit) {
     const n = Math.max(0, ...P.texts.map((x) => (x.layer | 0) + 1));
     txtRow.replaceChildren(...Array.from({ length: n }, (_, k) => h("div.orow", {}, P.texts.filter((x) => (x.layer | 0) === n - 1 - k).map((x) =>
       h("div.tx" + (x.id === txtSel ? ".sel" : ""), { "data-id": x.id, style: { left: x.start * pps + "px", width: Math.max(8, (x.end - x.start) * pps - 2) + "px" } },
-        h("span", {}, "T", (x.text || "").replace(/\n/g, " ")), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }))))));
+        h("span", {}, icon("type", 12), (x.text || "").replace(/\n/g, " ")), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }))))));
     autoTl(); reveal(txtRow.querySelector(".tx.sel"));
   }
   function selectText(id) {
@@ -712,6 +716,50 @@ export async function openEditor(P, onExit) {
     busy: () => {}, get making() { return making; }, makeSubs: () => makeSubs(),
   };
   let making = false;
+  // ——— быстрый монтаж: паузы, субтитры, голос, цвет — одним нажатием
+  const Q = { cut: true, gap: 0.6, subs: true, style: "Караоке", voice: true, look: "vivid" };
+  Object.assign(Q, settings.get("quick") || {});
+  let quickBusy = "";
+  // убрать паузы: из каждого клипа оставить только куски с речью (паузы длиннее gap вырезаются)
+  function cutPauses(gap) {
+    const pad = 0.12, outClips = []; let removed = 0;
+    for (const c of P.clips) {
+      const ws = (P.words[c.media] || []).filter((w) => w.end > c.in && w.start < c.out);
+      if (!ws.length || c.curve) { outClips.push(c); continue; }
+      const parts = []; let a = Math.max(c.in, ws[0].start - pad), b = Math.min(c.out, ws[0].end + pad);
+      for (const w of ws.slice(1)) {
+        if (w.start - b > gap) { parts.push([a, b]); a = Math.max(c.in, w.start - pad); }
+        b = Math.min(c.out, Math.max(b, w.end + pad));
+      }
+      parts.push([a, b]);
+      const keep = parts.filter(([x, y]) => y - x >= 0.25);
+      if (!keep.length) { outClips.push(c); continue; }
+      removed += (c.out - c.in) - keep.reduce((s, [x, y]) => s + y - x, 0);
+      keep.forEach(([x, y], k) => { const n = { ...c, id: k ? uid() : c.id, in: x, out: y }; if (k < keep.length - 1) delete n.tr; outClips.push(n); });
+    }
+    P.clips = outClips;
+    return removed / (P.clips[0]?.speed || 1);
+  }
+  async function quickEdit() {
+    if (quickBusy) return;
+    settings.set("quick", Q);
+    try {
+      pause();
+      if (Q.cut || Q.subs) {
+        quickBusy = "Распознаю речь…"; renderPanel();
+        for (const k of new Set(P.clips.map((c) => c.media))) if (!(P.words[k] || []).length) { const w = await ensureWords(k, P.media[k].name); P.words[k] = JSON.parse(JSON.stringify(w)); }
+      }
+      begin();
+      let removed = 0;
+      if (Q.cut) removed = cutPauses(Q.gap);
+      if (Q.subs && P.clips.some((c) => (P.words[c.media] || []).length)) { const pr = PRESETS.find((x) => x[0] === Q.style) || PRESETS[1]; P.subs = { on: true, style: { ...(P.subs?.style || {}), ...pr[1] } }; }
+      if (Q.voice) P.voice = { ...VOICE_ON };
+      if (Q.look && Q.look !== "none") { const L = LOOKS.find((x) => x[0] === Q.look); if (L) { P.look = { id: L[0], k: 1 }; P.grade = scaleLook(L[2], 1); } }
+      quickBusy = "";
+      layout(); seek(0); renderPanel(); save();
+      toast(`Готово${Q.cut ? `: убрано ${removed.toFixed(1).replace(".", ",")} с пауз` : ""}. Отменить — стрелка вверху`, 5000);
+    } catch (e) { quickBusy = ""; renderPanel(); toast(e.message, 6000); }
+  }
   async function makeSubs() {
     if (making) return;
     making = true; renderPanel();
@@ -931,7 +979,7 @@ export async function openEditor(P, onExit) {
       at ??= c;
     }
     Promise.all(recs.map((m) => video(m.key))).then(() => { layout(); seek(startOf(P.clips.indexOf(at))); });
-    if (P.clips.length === recs.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
+    if (P.clips.length === recs.length) { pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240); panel = "quick"; renderPanel(); requestAnimationFrame(fit); }
     layout(); save();
   }
   function addMedia() { pause(); openLibrary({ onPick: addClips }); }
@@ -968,6 +1016,7 @@ export async function openEditor(P, onExit) {
   function renderPanel() {
     side.hidden = !panel;
     ed.classList.toggle("with-panel", !!panel);
+    ed.dataset.panel = panel || "";   // выделение показываем только у того, что сейчас настраивается
     ed.classList.toggle("tall", panel === "subs" && !!P.subs);
     requestAnimationFrame(autoTl);
     if (!panel) return side.replaceChildren();
@@ -988,15 +1037,23 @@ export async function openEditor(P, onExit) {
         slider("Вверх — вниз", () => fr().y, (v) => fr().y = v),
         slider("Поворот", () => fr().rot, (v) => fr().rot = v, { min: -180, max: 180, step: 0.5, show: (v) => Math.round(v) + "°" }));
     } else if (panel === "color") {
-      const g = P.grade, tabs = [...GROUPS.map((x) => x[0]), "Оттенки"];
+      const g = P.grade, tabs = ["Пресеты", ...GROUPS.map((x) => x[0]), "Оттенки"];
       let body;
-      if (colorTab < GROUPS.length) body = GROUPS[colorTab][1].map(([k, label, min]) => slider(label, () => g[k] ?? GRADE_DEFAULT[k], (v) => g[k] = v, { min: min ?? -1 }));
+      if (colorTab === 0) {
+        const lk = P.look && LOOKS.find((x) => x[0] === P.look.id);
+        const apply = (id, k) => { const L = LOOKS.find((x) => x[0] === id); P.look = { id, k }; P.grade = scaleLook(L[2], k); draw(); };
+        body = [h("div.looks", {}, favSort("look", LOOKS).map(([id, name]) => h("button" + (P.look?.id === id || (!P.look && id === "natural") ? ".on" : ""), { "data-look": id, onclick: () => { begin(); apply(id, P.look?.k ?? 1); renderPanel(); save(); } },
+            h("img", { alt: "" }), h("span", {}, name), id !== "natural" && favStar("look", id, renderPanel)))),
+          lk && lk[0] !== "natural" ? slider("Сила пресета", () => P.look.k, (v) => apply(P.look.id, v), { min: 0, max: 1.5, def: 1, show: (v) => Math.round(v * 100) + " %" }) : null,
+          h("p.hint", {}, "Пресет ставит ползунки во вкладках «Свет», «Цвет», «Детали» — их можно подправить после.")].filter(Boolean);
+        requestAnimationFrame(lookThumbs);
+      } else if (colorTab <= GROUPS.length) body = GROUPS[colorTab - 1][1].map(([k, label, min]) => slider(label, () => g[k] ?? GRADE_DEFAULT[k], (v) => g[k] = v, { min: min ?? -1 }));
       else {
         const b = HSL_BANDS[band], arr = () => ((g.hsl ||= {})[b] ||= [0, 0, 0]);
         body = [h("div.bands", {}, BAND_COLORS.map((col, i) => h("button" + (i === band ? ".on" : ""), { style: { background: col }, "aria-label": "Цвет " + (i + 1), onclick: () => { band = i; renderPanel(); } }))),
           ...["Тон", "Насыщенность", "Светлота"].map((label, i) => slider(label, () => (g.hsl?.[b] || [0, 0, 0])[i], (v) => arr()[i] = v))];
       }
-      side.replaceChildren(head("Цвет", () => { begin(); P.grade = {}; renderPanel(); draw(); save(); }),
+      side.replaceChildren(head("Цвет", () => { begin(); P.grade = {}; delete P.look; renderPanel(); draw(); save(); }),
         h("div.seg.scroll", {}, tabs.map((n, i) => h("button" + (i === colorTab ? ".on" : ""), { onclick: () => { colorTab = i; renderPanel(); } }, n))),
         h("div.sliders", {}, body), h("p.hint", {}, "Цвет применяется ко всему ролику. Нажмите на число, чтобы вернуть ноль."));
     } else if (panel === "subs") {
@@ -1007,6 +1064,19 @@ export async function openEditor(P, onExit) {
       }
       subApi.slider = slider; subApi.head = head;
       side.replaceChildren(...subsPanel(subApi).flat(9).filter(Boolean));
+    } else if (panel === "quick") {
+      const tog = (k, label, sub) => h("button.check" + (Q[k] ? ".on" : ""), { onclick: () => { Q[k] = !Q[k]; settings.set("quick", Q); renderPanel(); } }, h("i", {}, Q[k] ? icon("check", 14) : null), h("span", {}, label, sub ? h("small.muted", {}, " " + sub) : null));
+      side.replaceChildren(head("Быстрый монтаж"),
+        h("p.hint", {}, "Отметьте, что сделать, и нажмите одну кнопку. Всё можно поправить потом или отменить стрелкой вверху."),
+        tog("cut", "Убрать паузы", "и тишину в начале и конце"),
+        Q.cut ? slider("Паузы длиннее", () => Q.gap, (v) => { Q.gap = v; settings.set("quick", Q); }, { min: 0.3, max: 2, step: 0.05, def: 0.6, show: (v) => v.toFixed(1).replace(".", ",") + " с" }) : null,
+        tog("subs", "Субтитры"),
+        Q.subs ? h("div.seg.scroll", {}, favSort("style", PRESETS).slice(0, 8).map(([n]) => h("button" + (Q.style === n ? ".on" : ""), { onclick: () => { Q.style = n; settings.set("quick", Q); renderPanel(); } }, n))) : null,
+        tog("voice", "Улучшить голос"),
+        h("div.sl-top", {}, "Цвет"),
+        h("div.seg.scroll", {}, [["none", "Не менять"], ...favSort("look", LOOKS.filter((x) => x[0] !== "natural"))].map(([id, n]) => h("button" + (Q.look === id ? ".on" : ""), { onclick: () => { Q.look = id; settings.set("quick", Q); renderPanel(); } }, n))),
+        h("button.btn.primary.wide.big", { onclick: quickEdit, disabled: !!quickBusy }, quickBusy || "Сделать монтаж"),
+        h("p.hint", {}, "Паузы и субтитры берутся из распознанной речи. Если видео ещё не готовилось, распознавание займёт до 4 минут."));
     } else if (panel === "transition") {
       const i = P.clips.findIndex((c) => c.id === trSel), c = P.clips[i];
       if (!c || i >= P.clips.length - 1) return side.replaceChildren(head("Переход"), h("p.hint", {}, "Нажмите на значок ◇ между клипами на дорожке."));
@@ -1015,7 +1085,7 @@ export async function openEditor(P, onExit) {
       const preview = () => { const s0 = startOf(i + 1); pause(); seek(Math.max(0, s0 - (c.tr?.dur || 0.6) / 2 - 0.4)); stopAt = Math.min(total(), s0 + (c.tr?.dur || 0.6) / 2 + 0.4); play(); };
       side.replaceChildren(head("Переход"),
         h("p.hint", {}, `Между клипами ${i + 1} и ${i + 2}. Переход закрывает кадр и открывает следующий; текст и субтитры остаются поверх.`),
-        h("div.tiles", {}, TRANSITIONS.map(([k, n]) => h("button" + (tr.kind === k ? ".on" : ""), { onclick: () => ch(() => { if (k === "none") delete c.tr; else c.tr = { ...tr, kind: k }; }) }, n))),
+        h("div.tiles", {}, favSort("transition", TRANSITIONS).map(([k, n]) => h("button" + (tr.kind === k ? ".on" : ""), { onclick: () => ch(() => { if (k === "none") delete c.tr; else c.tr = { ...tr, kind: k }; }) }, n, k !== "none" && favStar("transition", k, renderPanel)))),
         tr.kind !== "none" ? slider("Длительность", () => c.tr.dur || 0.6, (v) => { c.tr.dur = v; draw(); }, { min: 0.2, max: 2, def: 0.6, show: (v) => v.toFixed(1).replace(".", ",") + " с" }) : null,
         tr.kind !== "none" ? h("div.row-btns", {}, h("button.btn.sm", { onclick: preview }, "Показать"),
           h("button.btn.sm", { onclick: () => ch(() => { P.clips.forEach((x, k) => { if (k < P.clips.length - 1) x.tr = { ...c.tr }; }); }) }, "Применить ко всем стыкам")) : null);
@@ -1040,7 +1110,7 @@ export async function openEditor(P, onExit) {
         const graph = c.curve ? curveEditor(c, done) : null;
         side.replaceChildren(head("Скорость", c.curve && (() => set(1))), tabs,
           h("p.hint", {}, "Скорость меняется внутри клипа: разгон, замедление, вспышка. Выберите шаблон, потом поправьте точки пальцем."),
-          h("div.tiles.curves", {}, CURVES.map(([k, n, pts]) => h("button" + (preset && preset[0] === k ? ".on" : ""), { onclick: () => { begin(); delete c.speed; c.curve = pts.map((p) => [...p]); done(); } }, curveIcon(pts), h("span", {}, n)))),
+          h("div.tiles.curves", {}, favSort("curve", CURVES).map(([k, n, pts]) => h("button" + (preset && preset[0] === k ? ".on" : ""), { onclick: () => { begin(); delete c.speed; c.curve = pts.map((p) => [...p]); done(); } }, curveIcon(pts), h("span", {}, n), favStar("curve", k, renderPanel)))),
           ...(c.curve ? [graph, info] : [h("p.hint", {}, "Сейчас кривой нет — нажмите на шаблон.")]));
       }
     } else if (panel === "mask") {
@@ -1077,7 +1147,7 @@ export async function openEditor(P, onExit) {
       const ch = (fn) => { begin(); fn(); layoutOvs(); syncOv(); draw(); renderPanel(); save(); };
       const osl = (label, key, min, max, show, step) => slider(label, () => o[key] ?? OV_DEFAULT[key], (v) => { o[key] = v; }, { min, max, step, def: OV_DEFAULT[key], show });
       const pct = (v) => Math.round(v * 100), sec = (v) => v.toFixed(2).replace(".", ",") + " с";
-      const tiles = (list, on, pick) => h("div.tiles", {}, list.map(([k, n]) => h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k) }, n)));
+      const tiles = (list, on, pick, fav) => h("div.tiles", {}, (fav ? favSort(fav, list) : list).map(([k, n]) => h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k) }, n, fav && k !== "none" && favStar(fav, k, renderPanel))));
       const sz = ovSize(o) || { w: 1, h: 1 }, fr = out(), cover = Math.max(1, (fr.h / fr.w) * (sz.w / sz.h));
       const maxL = Math.max(0, ...P.overlays.map((x) => x.layer | 0));
       const m = o.mask && o.mask.shape !== "none" ? o.mask : null;
@@ -1094,9 +1164,9 @@ export async function openEditor(P, onExit) {
           h("button", { onclick: () => ch(() => { o.layer = (o.layer | 0) + 1; }) }, "Выше"),
           h("small.muted", {}, `${(o.layer | 0) + 1} из ${maxL + 1}`))];
       else if (ovTab === 1) body = [
-        h("div.sl-top", {}, "Появление"), tiles(OV_IN, o.in ?? OV_DEFAULT.in, (k) => ch(() => { o.in = k; })), (o.in ?? OV_DEFAULT.in) !== "none" ? osl("Длительность появления", "inDur", 0.05, 2, sec) : null,
-        h("div.sl-top", {}, "Исчезание"), tiles(OV_OUT, o.out ?? OV_DEFAULT.out, (k) => ch(() => { o.out = k; })), (o.out ?? OV_DEFAULT.out) !== "none" ? osl("Длительность исчезания", "outDur", 0.05, 2, sec) : null,
-        h("div.sl-top", {}, "Пока на экране"), tiles(OV_LOOP, o.loop ?? OV_DEFAULT.loop, (k) => ch(() => { o.loop = k; }))];
+        h("div.sl-top", {}, "Появление"), tiles(OV_IN, o.in ?? OV_DEFAULT.in, (k) => ch(() => { o.in = k; }), "ov-in"), ...((o.in ?? OV_DEFAULT.in) !== "none" ? [osl("Длительность появления", "inDur", 0.05, 2, sec), ...easePicker(o.inEase, (k) => ch(() => { o.inEase = k; }))] : []),
+        h("div.sl-top", {}, "Исчезание"), tiles(OV_OUT, o.out ?? OV_DEFAULT.out, (k) => ch(() => { o.out = k; }), "ov-out"), ...((o.out ?? OV_DEFAULT.out) !== "none" ? [osl("Длительность исчезания", "outDur", 0.05, 2, sec), ...easePicker(o.outEase, (k) => ch(() => { o.outEase = k; }))] : []),
+        h("div.sl-top", {}, "Пока на экране"), tiles(OV_LOOP, o.loop ?? OV_DEFAULT.loop, (k) => ch(() => { o.loop = k; }), "ov-loop")];
       else body = [
         h("p.hint", {}, "Оставляет видимой только часть наложения, края можно растушевать."),
         tiles(MASK_SHAPES, m ? m.shape : "none", (k) => ch(() => { if (k === "none") delete o.mask; else o.mask = { ...MASK_DEFAULT, w: 0.9, h: 0.9, ...(o.mask || {}), shape: k }; })),
@@ -1140,6 +1210,20 @@ export async function openEditor(P, onExit) {
           h("p.hint", {}, "Тяните звук на дорожке внизу, за жёлтые края — обрезайте. Громче 100 % слышно только в готовом видео. Приглушение под голос в превью слышно, если созданы субтитры; в готовом видео — всегда."),
           h("button.btn.wide.danger", { onclick: removeSound }, "Удалить звук")]
           : [P.sounds.length ? h("p.hint", {}, "Чтобы изменить звук, нажмите на него на дорожке внизу.") : h("p.hint", {}, "Фоновая музыка или звуковой эффект из «Для монтажа ПАК» или с устройства. Музыка сама встанет тише и будет приглушаться под голос.")]));
+    }
+  }
+  // превью пресетов цвета на текущем кадре
+  let lookR = null; const lookCv = document.createElement("canvas");
+  function lookThumbs() {
+    const loc = locate(t), rec = loc && vids.get(loc.clip.media);
+    if (!rec || !rec.ok) return;
+    const o = out(); lookCv.width = 96; lookCv.height = Math.round(96 * o.h / o.w);
+    lookR ||= createRenderer(lookCv);
+    if (!lookR) return;
+    for (const b of side.querySelectorAll(".looks button")) {
+      const L = LOOKS.find((x) => x[0] === b.dataset.look);
+      lookR.draw(rec.v, rec.w, rec.h, o, loc.clip.frame, scaleLook(L[2], 1));
+      try { b.querySelector("img").src = lookCv.toDataURL("image/jpeg", 0.75); } catch {}
     }
   }
   // ——— переходы: стыки клипов (переход хранится у клипа слева: clip.tr)
@@ -1296,5 +1380,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }

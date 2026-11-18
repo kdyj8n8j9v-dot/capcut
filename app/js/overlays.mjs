@@ -1,6 +1,6 @@
 // Наложения: фото, стикеры и видео поверх основного видео. Один и тот же код рисует превью в приложении
 // и готовое видео на сборщике (worker/subs.mjs) — поэтому превью совпадает с итогом. Здесь нет ничего от браузера.
-import { drawMaskCached } from "./subs.mjs";
+import { drawMaskCached, ease } from "./subs.mjs";
 
 export const OV_DEFAULT = { x: 0.5, y: 0.5, scale: 0.6, rot: 0, opacity: 1, radius: 0, flip: false,
   in: "fade", inDur: 0.3, out: "fade", outDur: 0.3, loop: "none" };
@@ -19,11 +19,11 @@ export function ovPose(o0, t, W, H, srcW, srcH) {
   if (t < o.start || t >= o.end || !srcW || !srcH) return null;
   const w = o.scale * W, h = w * srcH / srcW, tau = t - o.start, len = o.end - o.start;
   const F = { cx: o.x * W, cy: o.y * H, w, h, rot: o.rot * Math.PI / 180, sx: o.flip ? -1 : 1, sy: 1, a: o.opacity, clip: null };
-  const fx = (kind, p, dir) => {
-    const e = eo(p), d = Math.max(w, h) * 0.25;
+  const fx = (kind, p, dir, how) => {
+    const own = how && how !== "auto", e = own ? ease(how, p) : eo(p), d = Math.max(w, h) * 0.25;
     switch (kind) {
-      case "fade": F.a *= p; break;
-      case "pop": { const s = dir > 0 ? back(p) : e; F.sx *= s; F.sy *= s; F.a *= Math.min(1, p * 3); break; }
+      case "fade": F.a *= own ? clamp(e, 0, 1) : p; break;
+      case "pop": { const s = own ? e : dir > 0 ? back(p) : e; F.sx *= s; F.sy *= s; F.a *= Math.min(1, p * 3); break; }
       case "zoom": { const s = 1.4 - 0.4 * e; F.sx *= s; F.sy *= s; F.a *= p; break; }
       case "up": F.cy += dir * (1 - e) * d; F.a *= p; break;
       case "down": F.cy -= dir * (1 - e) * d; F.a *= p; break;
@@ -33,8 +33,8 @@ export function ovPose(o0, t, W, H, srcW, srcH) {
       case "wipe": F.clip = dir > 0 ? [0, e] : [1 - e, 1]; break;
     }
   };
-  if (o.in !== "none") fx(o.in, clamp(tau / Math.max(0.01, o.inDur), 0, 1), 1);
-  if (o.out !== "none") { const q = clamp((o.end - t) / Math.max(0.01, o.outDur), 0, 1); if (q < 1) fx(o.out, q, -1); }
+  if (o.in !== "none") fx(o.in, clamp(tau / Math.max(0.01, o.inDur), 0, 1), 1, o.inEase);
+  if (o.out !== "none") { const q = clamp((o.end - t) / Math.max(0.01, o.outDur), 0, 1); if (q < 1) fx(o.out, q, -1, o.outEase); }
   const k = clamp(tau / Math.max(0.1, len), 0, 1);
   if (o.loop === "zoomIn") { F.sx *= 1 + 0.12 * k; F.sy *= 1 + 0.12 * k; }
   else if (o.loop === "zoomOut") { F.sx *= 1.12 - 0.12 * k; F.sy *= 1.12 - 0.12 * k; }

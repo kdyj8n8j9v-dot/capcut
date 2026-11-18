@@ -11,7 +11,7 @@ export const SUB_DEFAULT = {
   bg: 0, bgColor: "#000000", bgRadius: 0.3, bgPad: 0.25,
   cloud: 0, cloudColor: "#000000", cloudSize: 1, cloudTall: 1, cloudSoft: 0.6,
   hl: "color", hlColor: "#ffd60a", reveal: false, dim: false, emColor: "#ff375f",
-  in: "pop", inDur: 0.25, out: "none", outDur: 0.2, loop: "none",
+  in: "pop", inDur: 0.25, inEase: "auto", out: "none", outDur: 0.2, outEase: "auto", loop: "none",
 };
 export const ANIM_IN = [["none", "Нет"], ["fade", "Проявление"], ["pop", "Прыжок"], ["zoom", "Уменьшение"], ["up", "Снизу"], ["down", "Сверху"], ["left", "Слева"], ["right", "Справа"],
   ["drop", "Падение"], ["stomp", "Удар"], ["spring", "Пружина"], ["spin", "Поворот"], ["flip", "Разворот"], ["wipe", "Шторка"], ["wipeUp", "Шторка вверх"], ["wipeC", "Из центра"], ["type", "Печать"], ["letters", "По буквам"], ["words", "По словам"]];
@@ -48,6 +48,24 @@ const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const eo = (p) => 1 - Math.pow(1 - p, 3);
 const back = (p) => 1 + 2.70158 * Math.pow(p - 1, 3) + 1.70158 * Math.pow(p - 1, 2);
 const bounce = (p) => { const n = 7.5625, d = 2.75; return p < 1 / d ? n * p * p : p < 2 / d ? n * (p -= 1.5 / d) * p + 0.75 : p < 2.5 / d ? n * (p -= 2.25 / d) * p + 0.9375 : n * (p -= 2.625 / d) * p + 0.984375; };
+
+// Кривые движения анимаций (как резко или плавно идёт появление/исчезание). "auto" — как задумано у самой анимации.
+export const EASES = [["auto", "Как задумано"], ["linear", "Ровно"], ["out", "Плавная остановка"], ["in", "Разгон"], ["inout", "Плавно"],
+  ["snap", "Резко"], ["back", "С перелётом"], ["bounce", "Отскок"], ["elastic", "Пружина"]];
+export function ease(name, p) {
+  p = clamp(p, 0, 1);
+  switch (name) {
+    case "linear": return p;
+    case "out": return 1 - Math.pow(1 - p, 3);
+    case "in": return p * p * p;
+    case "inout": return p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+    case "snap": return 1 - Math.pow(1 - p, 7);
+    case "back": return back(p);
+    case "bounce": return bounce(p);
+    case "elastic": return p === 0 || p === 1 ? p : Math.pow(2, -10 * p) * Math.sin((p * 10 - 0.75) * (2 * Math.PI / 3)) + 1;
+    default: return 1 - Math.pow(1 - p, 3);
+  }
+}
 
 // Настройки с умолчаниями; понимает проекты, сделанные до расширения (anim, active, box, upper).
 export function normStyle(style) {
@@ -261,17 +279,17 @@ function drawLine(ctx, W, H, t, line, style) {
   // ——— движение всей строки: появление, исчезание, постоянное
   const tau = t - line.start;
   const F = { a: st.opacity, dx: 0, dy: 0, sx: 1, sy: 1, r: st.rot * Math.PI / 180, clip: null };
-  const fx = (kind, p, dir) => {      // p: 0 — не видно, 1 — на месте; dir: +1 появление, −1 исчезание
-    const e = eo(p);
+  const fx = (kind, p, dir, how) => {      // p: 0 — не видно, 1 — на месте; dir: +1 появление, −1 исчезание; how — кривая движения
+    const own = how && how !== "auto", e = own ? ease(how, p) : eo(p);
     switch (kind) {
-      case "fade": F.a *= p; break;
-      case "pop": { const s = dir > 0 ? back(p) : e; F.sx *= s; F.sy *= s; F.a *= Math.min(1, p * 3); break; }
+      case "fade": F.a *= own ? clamp(e, 0, 1) : p; break;
+      case "pop": { const s = own ? e : dir > 0 ? back(p) : e; F.sx *= s; F.sy *= s; F.a *= Math.min(1, p * 3); break; }
       case "zoom": { const s = 1.6 - 0.6 * e; F.sx *= s; F.sy *= s; F.a *= p; break; }
       case "up": F.dy += dir * (1 - e) * px * 0.8; F.a *= p; break;
       case "down": F.dy -= dir * (1 - e) * px * 0.8; F.a *= p; break;
       case "left": F.dx -= dir * (1 - e) * px * 1.6; F.a *= p; break;
       case "right": F.dx += dir * (1 - e) * px * 1.6; F.a *= p; break;
-      case "drop": F.dy -= (1 - bounce(p)) * px * 1.6; F.a *= Math.min(1, p * 4); break;
+      case "drop": F.dy -= (1 - (own ? e : bounce(p))) * px * 1.6; F.a *= Math.min(1, p * 4); break;
       case "stomp": { const s = p < 0.7 ? 2.4 - 1.5 * (p / 0.7) : 0.9 + 0.1 * ((p - 0.7) / 0.3); F.sx *= s; F.sy *= s; F.a *= Math.min(1, p * 5); break; }
       case "spring": { const k = 1 + 0.5 * Math.cos(p * Math.PI * 3) * (1 - p); F.sy *= k; F.sx *= 2 - k; F.a *= Math.min(1, p * 4); break; }
       case "spin": F.r += (1 - e) * -0.4; F.sx *= 0.5 + 0.5 * e; F.sy *= 0.5 + 0.5 * e; F.a *= p; break;
@@ -281,8 +299,8 @@ function drawLine(ctx, W, H, t, line, style) {
       case "wipeC": F.clip = [0.5 - 0.5 * e, 0, 0.5 + 0.5 * e, 1]; break;
     }
   };
-  if (st.in !== "none") fx(st.in, clamp(tau / Math.max(0.01, st.inDur), 0, 1), 1);
-  if (st.out !== "none") { const q = clamp((line.end - t) / Math.max(0.01, st.outDur), 0, 1); if (q < 1) fx(st.out, q, -1); }
+  if (st.in !== "none") fx(st.in, clamp(tau / Math.max(0.01, st.inDur), 0, 1), 1, st.inEase);
+  if (st.out !== "none") { const q = clamp((line.end - t) / Math.max(0.01, st.outDur), 0, 1); if (q < 1) fx(st.out, q, -1, st.outEase); }
   if (st.loop === "pulse") { const s = 1 + 0.05 * Math.sin(tau * 10); F.sx *= s; F.sy *= s; }
   else if (st.loop === "shake") { F.dx += px * 0.04 * Math.sin(tau * 47); F.dy += px * 0.04 * Math.sin(tau * 61 + 1); }
   else if (st.loop === "swing") F.r += 0.05 * Math.sin(tau * 4);

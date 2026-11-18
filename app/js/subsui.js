@@ -4,6 +4,7 @@ import { settings } from "./store.js";
 import { cloud } from "./cloud.js";
 import { FONTS, SUB_DEFAULT, PRESETS, ANIM_IN, ANIM_OUT, ANIM_LOOP, HL, drawSubs } from "./subs.mjs";
 import { packFonts, useFont, fontReady, haveLocal } from "./fonts.js";
+import { favStar, favSort, easePicker } from "./fav.js";
 
 // ——— цвет: #rrggbb ↔ тон, насыщенность, яркость
 function toHsv(hex) {
@@ -79,7 +80,7 @@ export function subsPanel(api) {
   // плитки анимаций: на каждой кнопке анимация играет сама
   const animTiles = (list, on, pick, kind) => {
     const cvs = [], t0 = performance.now();
-    const box = h("div.tiles.anim", {}, list.map(([k, n]) => { const cv = h("canvas", { width: 180, height: 76 }); cvs.push([cv, k]); return h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k), "aria-label": n }, cv, h("span", {}, n)); }));
+    const box = h("div.tiles.anim", {}, favSort("anim-" + kind, list).map(([k, n]) => { const cv = h("canvas", { width: 180, height: 76 }); cvs.push([cv, k]); return h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k), "aria-label": n }, cv, k !== "none" && favStar("anim-" + kind, k, rerender), h("span", {}, n)); }));
     const base = { font: "Montserrat", size: 0.2, x: 0.5, y: 0.5, color: "#ffffff", stroke: 0, shadow: 0, hl: "none", in: "none", out: "none", loop: "none", maxChars: 99, hlColor: "#ffd60a" };
     const one = (a, b) => [{ start: a, end: b, words: [{ text: "Текст", start: a, end: b }] }];
     const three = [{ start: -1, end: 9, words: ["Раз", "два", "три"].map((x, i) => ({ text: x, start: 0.15 + i * 0.6, end: 0.7 + i * 0.6 })) }];
@@ -110,9 +111,9 @@ export function subsPanel(api) {
       const cv = h("canvas", { width: 320, height: 120 });
       const paint = () => { const c = cv.getContext("2d"); c.clearRect(0, 0, 320, 120); drawSubs(c, 320, 120, 0.3, [{ start: 0, end: 9, words: [{ text: name.split(" ")[0], start: 0, end: 0.2 }, ...(name.includes(" ") ? [{ text: name.split(" ").slice(1).join(" "), start: 0.2, end: 9 }] : [])] }], { ...v, size: Math.min(0.15, 1.5 / Math.max(6, name.length)), x: 0.5, y: 0.5, rot: 0, in: "none", out: "none", loop: "none", reveal: false, maxChars: 99 }); };
       paint(); useFont(v.font).then(paint).catch(() => {});
-      return h("button" + (same(v) ? ".on" : ""), { onclick: () => apply(v), "aria-label": name }, cv, del && h("span.x", { onclick: (e) => { e.stopPropagation(); del(); } }, icon("close", 12)));
+      return h("button" + (same(v) ? ".on" : ""), { onclick: () => apply(v), "aria-label": name }, cv, !del && favStar("style", name, rerender), del && h("span.x", { onclick: (e) => { e.stopPropagation(); del(); } }, icon("close", 12)));
     };
-    body = [h("div.presets", {}, PRESETS.map(([name, v]) => tile(name, v))),
+    body = [h("div.presets", {}, favSort("style", PRESETS).map(([name, v]) => tile(name, v))),
       h("div.sec", {}, h("span", {}, "Мои стили"), h("button.link", { onclick: async () => {
         const name = await askText("Название стиля", "Мой стиль " + (mine.length + 1));
         if (name) { const v = { ...cur }; for (const k of ["x", "y", "rot", "shift"]) delete v[k]; settings.set("subStyles", [...mine, { name, style: v }]); rerender(); toast("Стиль сохранён"); }
@@ -164,13 +165,13 @@ export function subsPanel(api) {
     const q = fontQuery.trim().toLowerCase(), shown = (packList || []).filter((f) => !q || f.name.toLowerCase().includes(q));
     for (const f of shown.slice(0, 60)) if (packLocal.has(f.name) && !fontReady(f.name)) useFont(f.name).then(rerender).catch(() => {});
     body = [
-      h("div.fonts", {}, Object.keys(FONTS).map((f) => h("button" + (cur.font === f ? ".on" : ""), { style: { fontFamily: `"${f}"` }, onclick: () => setFont(f) }, f))),
+      h("div.fonts", {}, favSort("font", Object.keys(FONTS), (f) => f).map((f) => h("button" + (cur.font === f ? ".on" : ""), { style: { fontFamily: `"${f}"` }, onclick: () => setFont(f) }, f, favStar("font", f, rerender)))),
       h("div.sec", {}, h("span", {}, "Мои шрифты · MEGA"), h("button.link", { onclick: () => { packList = null; rerender(); loadPack(true); } }, "Обновить")),
       !cloud.signedIn() ? h("p.hint", {}, "Войдите в MEGA в «Настройках» — здесь появятся шрифты из папки «Для монтажа ПАК».")
         : packErr ? h("p.hint", {}, packErr) : !packList ? h("p.hint", {}, "Ищу шрифты в «Для монтажа ПАК»…")
         : !packList.length ? h("p.hint", {}, "В «Для монтажа ПАК» не нашлось файлов шрифтов (.ttf, .otf).")
         : [packList.length > 8 && h("input.field", { placeholder: `Поиск среди ${packList.length} шрифтов`, value: fontQuery, oninput: (e) => { fontQuery = e.target.value; clearTimeout(subsPanel.t); subsPanel.t = setTimeout(() => { rerender(); const i = document.querySelector(".panel input.field"); if (i) { i.focus(); i.setSelectionRange(99, 99); } }, 350); } }),
-          h("div.fonts", {}, shown.slice(0, 60).map((f) => h("button" + (cur.font === f.name ? ".on" : "") + (packLocal.has(f.name) ? "" : ".cloud"), { style: fontReady(f.name) ? { fontFamily: `"${f.name}"` } : {}, onclick: () => setFont(f.name) }, f.name))),
+          h("div.fonts", {}, favSort("font", shown, (f) => f.name).slice(0, 60).map((f) => h("button" + (cur.font === f.name ? ".on" : "") + (packLocal.has(f.name) ? "" : ".cloud"), { style: fontReady(f.name) ? { fontFamily: `"${f.name}"` } : {}, onclick: () => setFont(f.name) }, f.name, favStar("font", f.name, rerender)))),
           shown.length > 60 && h("p.hint", {}, `Показаны первые 60 из ${shown.length}. Уточните поиск.`),
           h("p.hint", {}, "Серые ещё не скачаны: нажмите — шрифт загрузится и применится. Если вместо русских букв другой шрифт, значит в этом шрифте нет кириллицы.")],
       sl("Размер", "size", 0.025, 0.2, (v) => Math.round(v * 1000)),
@@ -197,8 +198,8 @@ export function subsPanel(api) {
     const parts = [["in", "Появление"], ["out", "Исчезание"], ["loop", "В кадре"], ["hl", "Слова"]];
     const k = parts[animTab][0], pick = (key) => (v) => { change(() => st()[key] = v); api.playLine(); };
     body = [seg(parts, k, (x) => { animTab = parts.findIndex((p) => p[0] === x); rerender(); }),
-      k === "in" ? [animTiles(ANIM_IN, cur.in, pick("in"), "in"), cur.in !== "none" && sl("Длительность", "inDur", 0.05, 1.5, sec)]
-      : k === "out" ? [animTiles(ANIM_OUT, cur.out, pick("out"), "out"), cur.out !== "none" && sl("Длительность", "outDur", 0.05, 1.5, sec)]
+      k === "in" ? [animTiles(ANIM_IN, cur.in, pick("in"), "in"), cur.in !== "none" && [sl("Длительность", "inDur", 0.05, 1.5, sec), ...easePicker(cur.inEase, pick("inEase"))]]
+      : k === "out" ? [animTiles(ANIM_OUT, cur.out, pick("out"), "out"), cur.out !== "none" && [sl("Длительность", "outDur", 0.05, 1.5, sec), ...easePicker(cur.outEase, pick("outEase"))]]
       : k === "loop" ? [animTiles(ANIM_LOOP, cur.loop, pick("loop"), "loop"), h("p.hint", {}, "Движение, которое идёт всё время, пока строка на экране.")]
       : [h("p.hint", {}, "Как выделяется слово, которое сейчас звучит."), animTiles(HL, cur.hl, pick("hl"), "hl"),
         cur.hl !== "none" && [h("div.sl-top", {}, "Цвет звучащего слова"), picker("hlColor")],

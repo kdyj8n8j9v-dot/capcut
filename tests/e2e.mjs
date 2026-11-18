@@ -101,6 +101,15 @@ async function run(label, viewport, scale) {
   await page.waitForTimeout(300);
   const p0 = await px();
   await page.click('[data-tool=color]');
+  await page.waitForSelector(".looks button img[src^='data:']", { timeout: 8000 });
+  ok(await page.locator(".looks button").count() >= 12, "пресеты цвета с превью на своём кадре");
+  await page.click(".looks button[data-look=cinema]"); await page.waitForTimeout(150);
+  ok(await ed(() => window.__ed.P.look?.id === "cinema" && window.__ed.P.grade.contrast > 0), "пресет «Кино» применяется одним нажатием");
+  await page.locator(".looks button[data-look=cinema] .star").click();
+  ok(await page.evaluate(() => document.querySelector(".looks button")?.dataset.look) === "cinema", "избранный пресет встаёт первым");
+  await shot("7-looks");
+  await page.click(".panel-head >> text=Сбросить");
+  await page.click(".panel .seg >> text=Свет");
   await page.locator('input[aria-label="Экспозиция"]').fill("0.8");
   await page.waitForTimeout(100);
   const p1 = await px();
@@ -431,6 +440,18 @@ async function run(label, viewport, scale) {
   await page.waitForFunction(() => window.__ed && window.__ed.P.clips.length === 2);
   await page.waitForFunction(() => { const c = document.querySelector(".view canvas"), g = c.getContext("webgl"), b = new Uint8Array(4); g.readPixels(c.width >> 1, c.height >> 1, 1, 1, g.RGBA, g.UNSIGNED_BYTE, b); return b[0] + b[1] + b[2] > 30; });
   ok(true, "после перезапуска проект и превью на месте");
+  // быстрый монтаж в новом проекте: добавить видео → одна кнопка
+  await page.click(".bar .link"); await page.waitForSelector(".card.new"); await page.click(".card.new");
+  await page.click(".empty .btn"); await page.waitForSelector(".lib .item >> text=Съёмка 1.mov");
+  await page.click(".lib .item >> text=Съёмка 1.mov"); await page.waitForSelector(".lib .badge.on"); await page.click(".lib-foot .btn");
+  await page.waitForSelector(".panel >> text=Сделать монтаж");
+  ok(true, "после первого видео сразу открылся «Быстрый монтаж»");
+  await shot("15-quick");
+  await page.click(".panel >> text=Сделать монтаж");
+  await page.waitForFunction(() => window.__ed.P.subs && window.__ed.P.voice?.denoise > 0, null, { timeout: 15000 });
+  ok(await ed(() => window.__ed.P.clips[0].in > 0.1 && window.__ed.P.look?.id && window.__ed.lines.length > 0), "быстрый монтаж: паузы обрезаны, субтитры, голос и цвет — одной кнопкой");
+  await page.click('[aria-label="Отменить"]');
+  ok(await ed(() => !window.__ed.P.subs && window.__ed.P.clips[0].in === 0), "и отменяется одной стрелкой");
   ok(errors.length === 0, "нет ошибок в консоли" + (errors.length ? ": " + errors.slice(0, 5).join(" | ") : ""));
   await ctx.close();
 }

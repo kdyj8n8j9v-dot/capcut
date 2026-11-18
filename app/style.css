@@ -248,7 +248,7 @@ input.cp-hue::-moz-range-track { height: 14px; border-radius: 7px; background: l
 .item.snd { gap: 8px; } .item.snd .item-main { text-align: left; } .item.snd .badge { flex: none; }
 .tl-txts { position: relative; margin-top: 3px; }
 .tx { position: absolute; top: 0; height: 28px; border-radius: 6px; background: #a0522d; color: #fff; font-size: 11px; line-height: 28px; padding: 0 6px; overflow: hidden; white-space: nowrap; cursor: pointer; }
-.tx span { display: inline-flex; gap: 5px; } .tx span::first-letter { font-weight: 800; }
+.tx span { display: inline-flex; align-items: center; gap: 4px; }
 .tx.sel { box-shadow: inset 0 0 0 2px var(--sel); overflow: visible; touch-action: none; cursor: grab; z-index: 2; }
 .tx .g { display: none; position: absolute; top: 0; bottom: 0; width: 18px; background: var(--sel); cursor: ew-resize; touch-action: none; }
 .tx.sel .g { display: block; } .tx .g.l { left: -10px; border-radius: 6px 0 0 6px; } .tx .g.r { right: -10px; border-radius: 0 6px 6px 0; }
@@ -260,6 +260,24 @@ textarea.txt { font-size: 17px; }
 .tl-track { position: relative; }
 .trb { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 6px; background: #fff; color: #000; font-size: 12px; line-height: 22px; text-align: center; z-index: 3; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
 .trb.on { background: var(--sel); } .trb.sel { box-shadow: 0 0 0 2px var(--accent); }
+.star { position: absolute; top: 2px; right: 4px; font-size: 15px; line-height: 1; color: rgba(255,255,255,.45); padding: 2px; z-index: 2; }
+.star.on { color: var(--sel); }
+.tiles button, .tiles.curves button, .fonts button, .looks button { position: relative; }
+.fonts button { padding-right: 24px; } .fonts .star { top: 50%; transform: translateY(-50%); }
+.tiles.eases { grid-template-columns: repeat(3, 1fr); } .tiles.eases button { flex-direction: column; gap: 2px; font-size: 12px; padding: 4px 2px; text-align: center; }
+.looks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px; }
+.looks button { display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 0 0 4px; border-radius: 9px; background: #111113; overflow: hidden; border: 2px solid transparent; font-size: 11.5px; line-height: 1.15; text-align: center; }
+.looks button.on { border-color: var(--accent); } .looks img { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; background: var(--s2); display: block; }
+@media (min-width: 820px) { .looks { grid-template-columns: repeat(3, 1fr); } }
+.acts { display: flex; gap: 8px; margin-right: 8px; } .acts .round { width: 40px; height: 40px; background: var(--s2); } .acts .act-del:not(:disabled) { color: var(--danger); }
+.zoom { align-items: center; }
+.check span small { font-weight: 400; }
+.tools { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+@media (min-width: 820px) { .tools { -webkit-mask-image: none; mask-image: none; } }
+/* выделение — только у того, что открыто в панели: остальные выбранные элементы выглядят обычно */
+.ed:not([data-panel=overlay]) .ov.sel, .ed:not([data-panel=text]) .tx.sel, .ed:not([data-panel=sound]) .sn.sel, .ed:not([data-panel=cloud]) .cl.sel { box-shadow: none; }
+.ed:not([data-panel=overlay]) .ov.sel .g, .ed:not([data-panel=text]) .tx.sel .g, .ed:not([data-panel=sound]) .sn.sel .g, .ed:not([data-panel=cloud]) .cl.sel .g { display: none; }
+@media (max-width: 480px) { .zoom > .round { display: none; } .acts { margin-right: 0; } }
 .tl-add { flex: none; width: 56px; height: 56px; margin-left: 10px; border-radius: 10px; background: var(--s2); display: grid; place-items: center; color: var(--accent); }
 .tl-head { position: absolute; left: 50%; top: 12px; bottom: 4px; width: 2px; margin-left: -1px; border-radius: 1px; background: #fff; pointer-events: none; box-shadow: 0 0 4px rgba(0,0,0,.8); z-index: 6; }
 
