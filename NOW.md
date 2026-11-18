@@ -9,8 +9,7 @@
 - Один код рисования для превью и сборщика (`worker/subs.mjs`): `app/js/subs.mjs` (субтитры, титры `P.texts`, облака, маски,
   переходы `clip.tr`, кривые движения `inEase`/`outEase`), `app/js/overlays.mjs` (`P.overlays`, картинки `P.images`).
 - Субтитры: панель `app/js/subsui.js`, шрифты из ПАК (`fonts.js`), строки/слово (`ls`, `ws`), слои (`ls.layer`).
-- Звук: `P.sounds`/`P.audios` (render.py `mix_sounds`, приглушение под голос), голос `P.voice` (render.py `audio_chain`).
-  Звук видео-наложений пока не идёт.
+- Звук: `P.sounds`/`P.audios` (render.py `mix_sounds`, приглушение под голос), голос `P.voice` (render.py `audio_chain`). Звук видео-наложений пока не идёт.
 - Скорость: `clip.speed` и кривые `clip.curve` (`app/js/speed.mjs`; в задание — `map`; render.py `curve_frames`). Редактор кривой
   как в CapCut: «Своя», свои шаблоны `settings.myCurves`, «+ Точка»/«Убрать точку», секунды во время перетаскивания, кадр под точкой.
 - Воспроизведение (`tick`): главное — видео со звуком, при воспроизведении НЕ перематывается (перемотки рвали звук на «слоги»);
