@@ -1,3 +1,4 @@
+import { clipLen, outAt } from "./speed.mjs";
 // Субтитры: разбивка слов на строки и отрисовка. Один и тот же код рисует превью в приложении
 // и готовое видео на сборщике (worker/subs.mjs) — поэтому превью совпадает с итогом. Здесь нет ничего от браузера.
 export const FONTS = { Montserrat: "Montserrat_800ExtraBold.ttf", Inter: "Inter_800ExtraBold.ttf", Rubik: "Rubik_800ExtraBold.ttf", Oswald: "Oswald_600SemiBold.ttf", Caveat: "Caveat_700Bold.ttf" };
@@ -65,7 +66,7 @@ export function buildLines(clips, words, style) {
   const st = normStyle(style), lines = [];
   let at = 0;
   for (const c of clips) {
-    const sp = c.speed || 1, len = (c.out - c.in) / sp, list = (words && words[c.media]) || [], from = lines.length;   // скорость клипа растягивает/сжимает речь
+    const len = clipLen(c), list = (words && words[c.media]) || [], from = lines.length;   // скорость клипа растягивает/сжимает речь
     let cur = null, chars = 0;
     const close = () => { if (cur) { lines.push(cur); cur = null; } };
     list.forEach((w, i) => {
@@ -74,7 +75,7 @@ export function buildLines(clips, words, style) {
       const own = () => (w.ls ? normStyle({ ...style, ...w.ls }) : st);   // строка со своими настройками: они записаны у её первого слова
       let text = show(w.text, cur ? cur.eff : own());
       if (!text) return;
-      const s = at + clamp((w.start - c.in) / sp, 0, len), e = at + clamp((w.end - c.in) / sp, 0, len);
+      const s = at + clamp(outAt(c, w.start), 0, len), e = at + clamp(outAt(c, w.end), 0, len);   // скорость и кривые растягивают речь
       if (cur) {
         const last = list[cur.i1], prev = cur.words[cur.words.length - 1];
         if (last.br || (!last.nb && (w.ls || s - prev.end > GAP || chars + 1 + text.length > cur.eff.maxChars || /[.!?…]$/.test(last.text)))) close();

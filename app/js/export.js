@@ -1,27 +1,28 @@
 // Экспорт: проект кладём в MEGA (не в GitHub — репозиторий публичный), сборщику передаём только номер задания.
 import { h, icon, sheet, toast, fmtTime, fmtSize, fill } from "./ui.js";
-import { db, uid } from "./store.js";
+import { db, uid, settings } from "./store.js";
 import { cloud, PATHS } from "./cloud.js";
 import { github, waitRun } from "./github.js";
 import { isUploaded, busyOf } from "./media.js";
 import { buildLines, normStyle, textLines, FONTS } from "./subs.mjs";
+import { clipLen, curveMap } from "./speed.mjs";
 import { packFont } from "./fonts.js";
 
 const safe = (n) => (n || "Ролик").replace(/[\/\\:*?"<>|]/g, "-").trim() || "Ролик";
 const r3 = (x) => Math.round(x * 1000) / 1000;
 export function buildJob(P, out, req) {
-  const ovs = (P.overlays || []).filter((o) => o.start < P.clips.reduce((x, c) => x + (c.out - c.in) / (c.speed || 1), 0));
+  const ovs = (P.overlays || []).filter((o) => o.start < P.clips.reduce((x, c) => x + clipLen(c), 0));
   const used = [...new Set([...P.clips.map((c) => c.media), ...ovs.filter((o) => o.kind === "video").map((o) => o.media)])];
   const style = normStyle(P.subs?.style), lines = [...(P.subs?.on ? buildLines(P.clips, P.words || {}, style) : []), ...textLines(P.texts)];   // субтитры + титры
-  const dur = P.clips.reduce((x, c) => x + (c.out - c.in) / (c.speed || 1), 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
-  const masks = []; { let at = 0; for (const c of P.clips) { const len = (c.out - c.in) / (c.speed || 1); if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
+  const dur = P.clips.reduce((x, c) => x + clipLen(c), 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
+  const masks = []; { let at = 0; for (const c of P.clips) { const len = clipLen(c); if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
   // свои шрифты (общий, отдельных строк и слов): сборщик возьмёт те же файлы из MEGA
   const names = new Set([style.font, ...lines.flatMap((l) => [l.style?.font, ...l.words.map((w) => w.style?.font)])].filter((n) => n && !FONTS[n]));
   const pf = [...names].map(packFont).filter(Boolean).map((f) => ({ name: f.name, path: f.path + "/" + f.file }));
   return {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
-    timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}) })),
+    timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.curve ? { map: curveMap(c) } : c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1, ...(P.voice || {}) },
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
@@ -31,31 +32,42 @@ export function buildJob(P, out, req) {
 }
 const STEPS = [["send", "Отправляю проект"], ["queued", "Жду свободный сборщик"], ["setup", "Сборщик готовится"], ["work", "Собираю видео в 4K"], ["done", "Готово"]];
 
+const DELIVER = [["mega", "В MEGA"], ["device", "На это устройство"], ["both", "Туда и туда"]];
+const MAX_DEVICE = 1.5e9;   // больше — браузер iPad может не удержать файл целиком; такой файл берётся из приложения MEGA
+
 export function openExport(P, out) {
-  let alive = true;
+  let alive = true, blob = null, loading = false, loadErr = "";
   const box = h("div.export");
   const s = sheet("Экспорт", box, { onclose: () => { alive = false; } });
-  const dur = P.clips.reduce((a, c) => a + (c.out - c.in) / (c.speed || 1), 0);
+  const dur = P.clips.reduce((a, c) => a + clipLen(c), 0);
   const saveP = () => db.put("projects", P).catch(() => {});
+  let deliver = settings.get("deliver") || "mega";
+  const where = (d) => d === "mega" ? "Готовый файл появится в MEGA, в папке «10 бит»." : d === "device" ? "Готовый файл приложение само скачает — останется сохранить его в «Файлы». В MEGA он не останется." : "Готовый файл будет в MEGA, в папке «10 бит», и приложение само скачает его на устройство.";
+  const remote = () => P.export.deliver === "device" ? { dir: PATHS.studio + "/out", name: P.export.req + ".mov" } : { dir: PATHS.out, name: P.export.file };
 
   function intro(err) {
-    fill(box, 
+    fill(box,
       h("div.spec", {}, h("b", {}, `${out.w}×${out.h} · 4K`), h("span", {}, "H.265 · 10 бит · 4:2:2 · наивысшее качество"), h("span.muted", {}, `Длительность ${fmtTime(dur)}`)),
       err && h("p.error", {}, err),
-      h("p.muted", {}, "Видео соберётся из оригиналов в облаке. Приложение можно закрыть — готовый файл появится в MEGA, в папке «10 бит»."),
+      h("div.sl-top.strong", {}, "Куда положить готовое видео"),
+      h("div.seg", {}, DELIVER.map(([k, n]) => h("button" + (deliver === k ? ".on" : ""), { onclick: () => { deliver = k; settings.set("deliver", k); intro(err); } }, n))),
+      h("p.muted", {}, "Видео соберётся из оригиналов в облаке. " + where(deliver) + " Приложение можно закрыть."),
       h("button.btn.primary.wide.big", { onclick: start }, "Собрать видео"));
   }
   function progress(phase, extra) {
-    const at = STEPS.findIndex((x) => x[0] === phase);
-    fill(box, 
+    const at = STEPS.findIndex((x) => x[0] === phase), d = P.export?.deliver || "mega";
+    const toDevice = phase === "done" && d !== "mega";
+    fill(box,
       h("div.steps", {}, STEPS.map(([id, label], i) => h("div.step" + (i < at || phase === "done" ? ".past" : i === at ? ".now" : ""), {},
         h("i", {}, i < at || phase === "done" ? icon("check", 14) : null), h("span", {}, label + (id === "work" && i === at && extra ? " — " + extra : ""))))),
       phase === "done"
-        ? [h("p.muted", {}, `Файл «${P.export.file}» лежит в MEGA, в папке «10 бит».`),
-          h("button.btn.primary.wide", { onclick: saveToFiles }, icon("down", 18), "Сохранить на устройство"),
-          h("button.btn.wide", { onclick: () => { P.export = null; saveP(); intro(); } }, "Собрать заново")]
+        ? [h("p.muted", {}, d === "device" ? (P.export.saved ? "Видео сохранено на устройство." : "Видео готово. Сохраните его в «Файлы» — копия в облаке потом удалится сама.") : `Файл «${P.export.file}» лежит в MEGA, в папке «10 бит».`),
+          loadErr && h("p.error", {}, loadErr),
+          h("button.btn.primary.wide.big.save", { onclick: saveToFiles, disabled: loading }, icon("down", 18), loading ? "Скачиваю…" : blob ? "Сохранить в «Файлы»" : "Скачать на устройство"),
+          h("button.btn.wide", { onclick: () => { P.export = null; blob = null; saveP(); intro(); } }, "Собрать заново")]
         : [h("p.muted", {}, "Можно закрыть это окно и приложение: сборка идёт в облаке. Обычно это занимает в несколько раз больше длительности ролика."),
           h("button.btn.wide", { onclick: () => { P.export = null; saveP(); alive = false; s.close(); } }, "Отменить слежение")]);
+    if (toDevice && !blob && !loading && !loadErr && !P.export.saved) fetchResult();   // скачать само, как только готово
   }
   async function start() {
     try {
@@ -67,10 +79,10 @@ export function openExport(P, out) {
       for (const k of new Set([...P.clips.map((c) => c.media), ...(P.overlays || []).filter((o) => o.kind === "video").map((o) => o.media)])) {
         if (busyOf(k)?.text?.startsWith("Загружаю") || !(await isUploaded(k))) throw new Error("Оригинал ещё загружается в MEGA. Дождитесь окончания загрузки и попробуйте снова.");
       }
-      const req = "e" + uid(), job = buildJob(P, out, req);
+      const req = "e" + uid(), job = { ...buildJob(P, out, req), deliver };
       await cloud.putText(PATHS.jobs, req + ".json", JSON.stringify(job));
       await github.dispatch("export", { req });
-      P.export = { req, at: Date.now(), file: job.name + "-10bit.mov" };
+      P.export = { req, at: Date.now(), file: job.name + "-10bit.mov", deliver };
       await saveP();
       follow();
     } catch (e) { intro(e.message); }
@@ -100,20 +112,30 @@ export function openExport(P, out) {
       else { P.export = null; await saveP(); if (alive) intro("Сборка не удалась. Попробуйте ещё раз; если повторится — напишите, что было в проекте."); }
     } catch (e) { clearInterval(poll); if (alive) intro(e.message); }
   }
-  async function saveToFiles() {
-    const name = P.export.file, btn = box.querySelector(".btn.primary");
+  // скачать готовый файл из облака на устройство (в память), с ходом в процентах на кнопке
+  async function fetchResult() {
+    loading = true; loadErr = ""; progress("done");
     try {
       await cloud.refresh();
-      const info = (await cloud.list(PATHS.out) || []).find((f) => f.name === name);
-      if (!info) throw new Error("Файл ещё не появился в MEGA. Попробуйте через минуту.");
-      if (info.size > 1.5e9) throw new Error(`Файл большой (${fmtSize(info.size)}). Откройте приложение MEGA, папка «10 бит», и сохраните его оттуда.`);
-      btn.disabled = true;
-      const blob = await cloud.download(PATHS.out, name, (p) => { btn.textContent = `Скачиваю ${Math.round(p * 100)} %`; });
-      const f = new File([blob], name, { type: "video/quicktime" });
-      btn.disabled = false; btn.textContent = "Сохранить на устройство";
+      const r = remote(), info = (await cloud.list(r.dir) || []).find((f) => f.name === r.name);
+      if (!info) throw new Error(P.export.deliver === "device" && P.export.saved ? "Копия в облаке уже удалена." : "Файл ещё не появился в облаке. Попробуйте через минуту.");
+      if (info.size > MAX_DEVICE) throw new Error(`Файл большой (${fmtSize(info.size)}) — браузер iPad его не удержит. Откройте приложение MEGA: ${P.export.deliver === "device" ? "папка «10 бит» → «.studio» → «out», файл " + r.name : "папка «10 бит»"} — и сохраните оттуда.`);
+      blob = await cloud.download(r.dir, r.name, (p) => { const b = box.querySelector(".save"); if (b) b.textContent = `Скачиваю ${Math.round(p * 100)} %`; });
+    } catch (e) { loadErr = e.message; }
+    loading = false; if (alive) progress("done");
+  }
+  async function saveToFiles() {
+    if (!blob) return fetchResult();
+    const name = P.export.file, f = new File([blob], name, { type: "video/quicktime" });
+    try {
       if (navigator.canShare && navigator.canShare({ files: [f] })) await navigator.share({ files: [f] });
       else { const a = h("a", { href: URL.createObjectURL(f), download: name }); document.body.append(a); a.click(); a.remove(); }
-    } catch (e) { if (btn) { btn.disabled = false; btn.textContent = "Сохранить на устройство"; } if (e.name !== "AbortError") toast(e.message, 6000); }
+      if (P.export.deliver === "device" && !P.export.saved) {   // сохранили — временная копия в облаке больше не нужна
+        P.export.saved = true; await saveP();
+        cloud.remove(remote().dir, remote().name).catch(() => {});
+      }
+      progress("done");
+    } catch (e) { if (e.name !== "AbortError") toast(e.message, 6000); }
   }
 
   if (P.export?.done) progress("done");

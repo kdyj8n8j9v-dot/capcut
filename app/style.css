@@ -253,6 +253,10 @@ input.cp-hue::-moz-range-track { height: 14px; border-radius: 7px; background: l
 .tx .g { display: none; position: absolute; top: 0; bottom: 0; width: 18px; background: var(--sel); cursor: ew-resize; touch-action: none; }
 .tx.sel .g { display: block; } .tx .g.l { left: -10px; border-radius: 6px 0 0 6px; } .tx .g.r { right: -10px; border-radius: 0 6px 6px 0; }
 textarea.txt { font-size: 17px; }
+.tiles.curves { grid-template-columns: repeat(2, 1fr); }
+.tiles.curves button { display: flex; align-items: center; gap: 8px; text-align: left; } .tiles.curves .cv { color: var(--sel); flex: none; display: inline-flex; }
+.tiles.curves button.on .cv { color: var(--accent); }
+.curve-box { margin: 4px 0 8px; } canvas.curve { width: 100%; height: auto; aspect-ratio: 2 / 1; border-radius: 12px; background: #111113; touch-action: none; display: block; }
 .tl-add { flex: none; width: 56px; height: 56px; margin-left: 10px; border-radius: 10px; background: var(--s2); display: grid; place-items: center; color: var(--accent); }
 .tl-head { position: absolute; left: 50%; top: 12px; bottom: 4px; width: 2px; margin-left: -1px; border-radius: 1px; background: #fff; pointer-events: none; box-shadow: 0 0 4px rgba(0,0,0,.8); z-index: 6; }
 

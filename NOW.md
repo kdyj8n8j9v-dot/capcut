@@ -24,6 +24,7 @@
   `mix_sounds` в render.py (sidechaincompress под голос). Выбор с прослушиванием — `openSoundPicker`.
 - Титры (свой текст, 2026-11-18): `P.texts` [{text, start, end, layer, style}] → `textLines` в subs.mjs (тот же движок; Enter = `br`), панель «Текст» = `subsPanel` с `kind: "text"`; в задание идут вместе с субтитрами (layer ≥ 100).
 - Скорость клипа `clip.speed` 0,25–4 (длина на таймлайне = (out−in)/speed; render.py: setpts + atempo, ровно n кадров). Голос — `P.voice` → `audio` задания (render.py `audio_chain`), кнопка «Улучшить голос».
+- Кривые скорости `clip.curve` [[доля, скорость]] — `app/js/speed.mjs` (шаблоны CURVES, clipLen/srcAt/outAt; в задание — `map` [[src, out]]; render.py `curve_frames`, звук кусками с atempo). Экспорт: «В MEGA / На устройство / Туда и туда» (`deliver`; «device» → MEGA «.studio/out», приложение скачивает и удаляет).
 - Мост с чатом «Монтаж» (решение владельца 2026-11-12: правки в приложении не тратят токены; всё только по его команде).
   MEGA «/10 бит/.studio/from-chat» — кладёт чат (`scripts/project.py put|push`), приложение только читает, не удаляет;
   «…/projects» — приложение само сохраняет версию владельца, чат читает по команде (`get`). `app/js/sync.js`,

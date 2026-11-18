@@ -43,7 +43,7 @@
       const r = runs[req]; if (!r) return { phase: "queued" };
       r.n++;
       if (r.n >= 3 && r.job === "prepare") { files["10 бит/.studio/Съёмка 2.proxy.mp4"] = await sample; }
-      if (r.n >= 3 && r.job === "export") { const j = JSON.parse(await files["10 бит/.studio/jobs/" + req + ".json"].text()); files["10 бит/" + j.name + "-10bit.mov"] = new Blob([new Uint8Array(1000)]); }
+      if (r.n >= 3 && r.job === "export") { const j = JSON.parse(await files["10 бит/.studio/jobs/" + req + ".json"].text()); files[j.deliver === "device" ? "10 бит/.studio/out/" + req + ".mov" : "10 бит/" + j.name + "-10bit.mov"] = new Blob([new Uint8Array(1000)]); }
       return { phase: ["queued", "setup", "work", "done"][Math.min(3, r.n)] };
     },
   };

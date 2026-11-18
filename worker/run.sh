@@ -49,7 +49,7 @@ for l in sys.stdin:
       python3 - "$first" > work/project.json <<'PY'
 import json, sys
 print(json.dumps({"id": "selftest", "name": "selftest", "output": {"w": 2160, "h": 3840}, "clips": {"a": {"file": sys.argv[1]}},
-                  "timeline": [{"clip": "a", "in": 1.0, "out": 2.0, "frame": {"scale": 1.2, "rot": 3}}, {"clip": "a", "in": 3.0, "out": 4.0}],
+                  "timeline": [{"clip": "a", "in": 1.0, "out": 2.0, "frame": {"scale": 1.2, "rot": 3}}, {"clip": "a", "in": 3.0, "out": 4.0, "map": [[0, 0], [0.5, 0.5], [1, 0.75]]}],
                   "grade": {"exposure": 0.2, "contrast": 0.2, "clarity": 0.3, "vignette": -0.3, "saturation": 0.1}, "audio": {"volume": 1},
                   "overlays": [{"kind": "video", "clip": "a", "from": 0.5, "start": 0.2, "end": 1.8, "x": 0.68, "y": 0.3, "scale": 0.45, "radius": 0.2, "in": "pop", "mask": {"shape": "ellipse", "w": 0.95, "h": 0.95, "feather": 0.1}}],
                   "subs": {"style": {"in": "letters", "hl": "fill", "glow": 0.4}, "masks": [{"shape": "ellipse", "w": 0.95, "h": 0.8, "feather": 0.1, "start": 0, "end": 1}], "clouds": [{"start": 0.2, "end": 1.8, "x": 0.5, "y": 0.72, "w": 0.9, "h": 0.2, "a": 0.6}], "lines": [{"start": 0.1, "end": 1.9, "words": [{"text": "Проверка", "start": 0.1, "end": 0.9}, {"text": "субтитров", "start": 0.9, "end": 1.8}]}]}}, ensure_ascii=False))
@@ -123,7 +123,21 @@ PY
     python3 render.py work/project.json --out "work/$name-10bit.mov"
     if [ "$req" = selftest ]; then echo "  ✓ проверка сборки прошла: $(cat work/selftest/progress.json)"; exit 0; fi
     kill $watcher 2>/dev/null || true
-    bash scripts/cloud.sh put "work/$name-10bit.mov"
+    # куда: «mega» — в папку «10 бит» (как раньше); «device» — во временную папку, приложение само скачает на устройство
+    # и удалит копию; «both» — в «10 бит», и приложение тоже скачает
+    deliver=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("deliver") or "mega")' work/project.json)
+    if [ "$deliver" = device ]; then
+      tmp="$STUDIO/out"; mega-mkdir -p "$tmp" 2>/dev/null || true
+      # забытые копии старше 3 дней — убрать
+      mega-find "$tmp" --mtime=+3d 2>/dev/null | while IFS= read -r old; do [ -n "$old" ] && mega-rm -f "$old" >/dev/null 2>&1; done || true
+      mv "work/$name-10bit.mov" "work/$req.mov"; size=$(stat -c %s "work/$req.mov")
+      echo "загрузка для устройства: $((size / 1000000)) МБ"
+      mega-put "work/$req.mov" "$tmp/" >/dev/null
+      remote=$(mega-ls -l "$tmp" | awk -v n="$req.mov" 'index($0, n) {print $3}' | head -1)
+      [ "$remote" = "$size" ] && echo "  ✓ готово, приложение скачает его на устройство" || { echo "  ✗ размер не совпал" >&2; exit 1; }
+    else
+      bash scripts/cloud.sh put "work/$name-10bit.mov"
+    fi
     mega-rm -f "$STUDIO/jobs/$req.json" "$STUDIO/jobs/$req.progress.json" >/dev/null 2>&1 || true ;;
   *) sed -n 2,6p "$0"; exit 2 ;;
 esac

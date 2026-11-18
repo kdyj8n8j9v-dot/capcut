@@ -76,8 +76,34 @@ def spd(s):
 
 
 def seg_len(s):
-    """Length of a segment on the timeline (the source part played at its speed)."""
+    """Length of a segment on the timeline (the source part played at its speed or along its speed curve)."""
+    if s.get("map"):
+        return float(s["map"][-1][1])
     return (s["out"] - s["in"]) / spd(s)
+
+
+def map_src(m, out_t):
+    """Speed curve (the app's speed.mjs curveMap: [[source s, timeline s], …] from the segment start): timeline → source."""
+    if out_t <= m[0][1]:
+        return m[0][0]
+    for (s0, o0), (s1, o1) in zip(m, m[1:]):
+        if out_t <= o1:
+            return s0 + (s1 - s0) * (out_t - o0) / max(1e-12, o1 - o0)
+    return m[-1][0]
+
+
+def curve_frames(src, m, n, fps, src_fps):
+    """n output frames along a speed curve: source frames are taken (repeated or skipped) at mapped times."""
+    cur, idx = None, -1
+    for k in range(n):
+        want = int(map_src(m, (k + 0.5) / fps) * src_fps)
+        while idx < want:
+            nxt = next(src, None)
+            if nxt is None:
+                break
+            cur, idx = nxt, idx + 1
+        if cur is not None:
+            yield cur
 
 
 def atempo(speed):
@@ -180,7 +206,20 @@ def build_audio(project, out_wav):
         path = clip_path(clips[s["clip"]])
         inputs += ["-i", str(path)]
         d = seg_len(s)
-        if has_audio(path):
+        if has_audio(path) and s.get("map"):   # speed curve: short pieces, each at its own tempo, joined
+            m, k = s["map"], 12
+            step = max(1, (len(m) - 1) // k)
+            pts = m[::step] if m[::step][-1] == m[-1] else m[::step] + [m[-1]]
+            pieces = []
+            for j, ((s0, o0), (s1, o1)) in enumerate(zip(pts, pts[1:])):
+                if o1 - o0 < 1e-3:
+                    continue
+                tempo = max(0.1, min(10.0, (s1 - s0) / (o1 - o0)))
+                parts.append(f"[{i}:a]atrim={s['in'] + s0:.6f}:{s['in'] + s1:.6f},asetpts=PTS-STARTPTS,{fmt},{atempo(tempo)}[c{i}_{j}]")
+                pieces.append(f"[c{i}_{j}]")
+            parts.append("".join(pieces) + f"concat=n={len(pieces)}:v=0:a=1,atrim=0:{d:.6f},apad=whole_dur={d:.6f},"
+                         f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE}[a{i}]")
+        elif has_audio(path):
             parts.append(f"[{i}:a]atrim={s['in']:.6f}:{s['out']:.6f},asetpts=PTS-STARTPTS,{fmt},"
                          + (atempo(spd(s)) + "," if spd(s) != 1 else "") +
                          f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE},volume={vol:.4f}[a{i}]")
@@ -312,10 +351,15 @@ def render(project, out, draft=False):
         for seg in segs:
             info = infos[seg["clip"]]
             n = round(seg_len(seg) * fps)
-            src = decode(clip_path(clips[seg["clip"]]), seg["in"], n / fps * spd(seg), info["w"], info["h"],
-                         fps if (info["fps"] != fps or spd(seg) != 1) else None, spd(seg), n if spd(seg) != 1 else None)
-            if spd(seg) != 1:
+            if seg.get("map"):   # speed curve: native source frames, picked along the curve
+                src = curve_frames(decode(clip_path(clips[seg["clip"]]), seg["in"], seg["out"] - seg["in"], info["w"], info["h"]),
+                                   seg["map"], n, float(fps), float(info["fps"]))
                 src = exactly(src, n)
+            else:
+                src = decode(clip_path(clips[seg["clip"]]), seg["in"], n / fps * spd(seg), info["w"], info["h"],
+                             fps if (info["fps"] != fps or spd(seg) != 1) else None, spd(seg), n if spd(seg) != 1 else None)
+                if spd(seg) != 1:
+                    src = exactly(src, n)
             if draft:
                 src = (f[::2, ::2] for f in src)
             pending = []
@@ -380,7 +424,8 @@ def still(project, t, png):
     clip = project["clips"][seg["clip"]]
     info = probe(clip_path(clip))
     out_w, out_h = output_size(project, info)
-    frame = next(decode(clip_path(clip), seg["in"] + (t - acc) * spd(seg), 1 / float(info["fps"]), info["w"], info["h"]))
+    at = map_src(seg["map"], t - acc) if seg.get("map") else (t - acc) * spd(seg)
+    frame = next(decode(clip_path(clip), seg["in"] + at, 1 / float(info["fps"]), info["w"], info["h"]))
     img = process(frame, project, seg, out_w, out_h, G.uv_grid(out_w, out_h))
     cube = Path(png).with_suffix(".cube")
     G.write_cube(G.settings(project.get("grade")), cube)
