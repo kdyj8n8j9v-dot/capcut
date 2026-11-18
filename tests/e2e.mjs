@@ -419,6 +419,19 @@ async function run(label, viewport, scale) {
   ok(tp > 0.8 && tp < 2.5, `воспроизведение идёт (за 1,5 с ушло на ${tp.toFixed(2)} с)`);
   await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 15000 });
   ok(Math.abs(await ed(() => window.__ed.t - window.__ed.total())) < 0.1, "доиграло до конца через склейки и остановилось");
+  // полноэкранный просмотр
+  if (await page.locator(".panel-head >> text=Готово").count()) await page.click(".panel-head >> text=Готово");
+  const cw0 = (await page.locator(".view canvas").first().boundingBox()).height;
+  await page.click(".full-btn"); await page.waitForTimeout(400);
+  const cw1 = (await page.locator(".view canvas").first().boundingBox()).height;
+  ok(await page.locator(".ed.full").count() === 1 && !(await page.locator(".tl").isVisible()) && cw1 > cw0 * 1.1, `на весь экран: только видео, оно больше (${Math.round(cw0)} → ${Math.round(cw1)})`);
+  await ed(() => window.__ed.seek(1)); await page.click(".fs-ctl .fs-play"); await page.waitForTimeout(1000);
+  ok(await ed(() => window.__ed.playing) && await ed(() => window.__ed.t) > 1.1, "на весь экране видео играет");
+  await page.mouse.click(10, 10); await page.waitForTimeout(150);   // кнопки ещё видны (прячутся через 2,5 с) — касание ставит паузу
+  ok(!(await ed(() => window.__ed.playing)), "касание по видео — пауза");
+  await shot("16-full");
+  await page.click(".fs-ctl >> text=Свернуть"); await page.waitForTimeout(300);
+  ok(await page.locator(".ed.full").count() === 0 && await page.locator(".tl").isVisible(), "«Свернуть» возвращает монтаж");
   await ed(() => window.__ed.seek(2)); await page.waitForTimeout(200);
   await shot("10-editor");
 

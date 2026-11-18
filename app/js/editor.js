@@ -104,7 +104,15 @@ export async function openEditor(P, onExit) {
     h("button.btn.primary.big", { onclick: addMedia }, icon("plus", 20), "Добавить видео"));
   const guides = h("div.guides", { hidden: true });
   const guideBtn = h("button.chip.guide-btn", { onclick: () => { settings.set("guides", !settings.get("guides")); fit(); } }, "Рамка");
-  const view = h("div.view", {}, canvas, over, guides, empty, guideBtn);
+  const fullBtn = h("button.chip.full-btn", { onclick: () => setFull(true), "aria-label": "На весь экран" }, icon("expand", 18));
+  // полноэкранный просмотр: только видео и простые кнопки внизу (сами прячутся во время воспроизведения)
+  const fsPlay = h("button.round.fs-play", { onclick: (e) => { e.stopPropagation(); toggle(); fsShow(); }, "aria-label": "Пуск или пауза" }, icon("play", 22));
+  const fsTime = h("span.fs-time", {}, "0:00");
+  const fsSeek = h("input.fs-seek", { type: "range", min: 0, max: 1, step: 0.01, value: 0, "aria-label": "Перемотка",
+    oninput: (e) => { e.stopPropagation(); pause(); seek(+fsSeek.value); fsShow(); } });
+  const fsCtl = h("div.fs-ctl", { onclick: (e) => e.stopPropagation() }, fsPlay, fsTime, fsSeek,
+    h("button.chip", { onclick: (e) => { e.stopPropagation(); setFull(false); } }, icon("shrink", 16), "Свернуть"));
+  const view = h("div.view", {}, canvas, over, guides, empty, guideBtn, fullBtn, fsCtl);
   const side = h("aside.panel", { hidden: true });
   const tNow = h("span.t-now", {}, "0:00,0"), tAll = h("span.t-all", {}, "0:00");
   const playBtn = h("button.round.play", { onclick: toggle, "aria-label": "Пуск" }, icon("play", 22));
@@ -141,7 +149,9 @@ export async function openEditor(P, onExit) {
   function syncBar() {
     undoBtn.disabled = !undo.length; redoBtn.disabled = !redo.length;
     const none = !P.clips.length;
-    empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = none;
+    empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = fullBtn.hidden = none;
+    fsPlay.replaceChildren(icon(playing ? "pause" : "play", 22)); fsUpd();
+    if (full) { if (playing) fsHide(); else fsShow(true); }
     const clipMode = !!sel && (!panel || CLIP_PANELS.has(panel) || panel === "color");
     tools.hidden = clipMode; clipBar.hidden = !clipMode;
     const bar = clipMode ? clipBar : tools;
@@ -446,6 +456,7 @@ export async function openEditor(P, onExit) {
     const pf = window.__perf, p0 = pf && performance.now(), p0d = performance.now();
     tlMove();
     tNow.textContent = fmtTime(t, true);
+    if (full) fsUpd();
     const p1 = pf && performance.now();
     syncOv(); syncSnd();
     const p2 = pf && performance.now();
@@ -1552,6 +1563,7 @@ export async function openEditor(P, onExit) {
   // кадр пальцами на превью
   const ptrs = new Map(); let g0 = null;
   canvas.addEventListener("pointerdown", (e) => {
+    if (full) return;   // на полном экране видео только смотрим
     const cl = panel === "cloud" && P.clouds.find((x) => x.id === cloudSel);
     const mk = panel === "mask" && target()?.mask;
     if (panel === "overlay" && ptrs.size === 0) {   // выбрать наложение пальцем прямо на видео
@@ -1628,7 +1640,32 @@ export async function openEditor(P, onExit) {
     else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") { e.preventDefault(); split(); }
   };
   document.addEventListener("keydown", onKey);
+  // ——— полноэкранный просмотр
+  let full = false, fsT = 0;
+  function fsUpd() { if (!full) return; fsTime.textContent = fmtTime(t) + " / " + fmtTime(total()); fsSeek.max = total() || 1; fsSeek.value = t; }
+  function fsShow(stay) { ed.classList.remove("fs-idle"); clearTimeout(fsT); if (!stay && playing) fsT = setTimeout(() => ed.classList.add("fs-idle"), 2500); }
+  function fsHide() { clearTimeout(fsT); fsT = setTimeout(() => ed.classList.add("fs-idle"), 2500); }
+  const fsDoc = () => document.fullscreenElement || document.webkitFullscreenElement;
+  function setFull(on) {
+    if (on === full) return;
+    full = on; ed.classList.toggle("full", on); ed.classList.remove("fs-idle");
+    if (on) {
+      sel = null; if (panel) { panel = null; renderPanel(); }
+      const rq = ed.requestFullscreen || ed.webkitRequestFullscreen;   // системный полный экран, где браузер позволяет (iPad, компьютер)
+      if (rq) try { const p = rq.call(ed); p && p.catch && p.catch(() => {}); } catch {}
+      fsShow(!playing);
+    } else if (fsDoc()) { const ex = document.exitFullscreen || document.webkitExitFullscreen; try { const p = ex.call(document); p && p.catch && p.catch(() => {}); } catch {} }
+    syncBar(); layout(); requestAnimationFrame(fit);
+  }
+  const onFsChange = () => { if (full && !fsDoc()) setFull(false); };
+  document.addEventListener("fullscreenchange", onFsChange); document.addEventListener("webkitfullscreenchange", onFsChange);
+  view.addEventListener("click", () => { if (!full) return; if (ed.classList.contains("fs-idle")) fsShow(); else toggle(); });
+  const onFsKey = (e) => { if (full && e.key === "Escape") setFull(false); };
+  document.addEventListener("keydown", onFsKey);
+
   function exit() {
+    setFull(false); document.removeEventListener("keydown", onFsKey);
+    document.removeEventListener("fullscreenchange", onFsChange); document.removeEventListener("webkitfullscreenchange", onFsChange);
     pause(); clearTimeout(saveT); clearTimeout(pushT); clearInterval(remoteTimer);
     if (dirty && cloud.signedIn()) pushProject({ ...P, updated: Date.now() }).catch(() => {});
     alive = false; ro.disconnect(); offMedia(); document.removeEventListener("keydown", onKey);
