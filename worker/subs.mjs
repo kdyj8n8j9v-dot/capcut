@@ -5,7 +5,7 @@ import fs from "fs";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
-import { drawSubs, drawClouds, drawMask, band, FONTS } from "../app/js/subs.mjs";
+import { drawSubs, drawClouds, drawMaskCached, band, FONTS } from "../app/js/subs.mjs";
 import { drawOverlays } from "../app/js/overlays.mjs";
 
 const [, , proj, out, fpsS, Ws, Hs, Ns] = process.argv;
@@ -25,7 +25,7 @@ class Frames {
     this.w = Math.max(2, Math.round(o.scale * W / 2) * 2); this.h = Math.max(2, Math.round(this.w * o.h / o.w / 2) * 2);
     this.size = this.w * this.h * 4; this.bufs = []; this.len = 0; this.ended = false; this.wait = [];
     this.p = spawn("ffmpeg", ["-v", "error", "-ss", String(o.from || 0), "-i", o.src, "-t", String(o.end - o.start + 1), "-an",
-      "-vf", `fps=${fpsS},scale=${this.w}:${this.h}:flags=bicubic,format=rgba`, "-f", "rawvideo", "-"], { stdio: ["ignore", "pipe", "inherit"] });
+      "-vf", `fps=${fpsS},scale=${this.w}:${this.h}:flags=bicubic,format=rgba`, "-f", "rawvideo", "-"], { stdio: ["ignore", "pipe", "ignore"] });   // ошибка при закрытии — не ошибка
     this.p.stdout.on("data", (d) => { this.bufs.push(d); this.len += d.length; if (this.len > this.size * 3) this.p.stdout.pause(); this.wake(); });
     this.p.stdout.on("end", () => { this.ended = true; this.wake(); });
     this.cv = createCanvas(this.w, this.h); this.img = this.cv.getContext("2d").createImageData(this.w, this.h); this.got = false;
@@ -51,7 +51,7 @@ const make = (w, h) => createCanvas(w, h);
 for (let n = 0; n < N; n++) {
   ctx.clearRect(0, 0, W, b.h);
   ctx.save(); ctx.translate(0, -b.y);
-  const tm = (n + 0.5) / fps, c0 = drawMask(ctx, W, H, masks.find((m) => tm >= m.start && tm < m.end));
+  const tm = (n + 0.5) / fps, mk = masks.find((m) => tm >= m.start && tm < m.end), c0 = drawMaskCached(ctx, W, H, mk && { ...mk, start: 0, end: 0 }, make);
   for (const o of overlays) {
     if (o.kind !== "video" || !o.src || !o.w) continue;
     const on = n / fps >= o.start && n / fps < o.end;
@@ -67,5 +67,7 @@ for (let n = 0; n < N; n++) {
   if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once("drain", r));
 }
 ff.stdin.end();
+for (const f of srcs.values()) if (f && f.close) f.close();   // видео-наложения, которые шли до конца ролика
 await done;
 console.log(JSON.stringify(b));
+process.exit(0);   // ничего не должно держать сборку

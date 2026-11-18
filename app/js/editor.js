@@ -4,7 +4,7 @@ import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
 import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage, audioUrl, ensureAudio } from "./media.js";
 import { drawOverlays, ovAt, OV_DEFAULT, OV_IN, OV_OUT, OV_LOOP } from "./overlays.mjs";
-import { buildLines, drawSubs, drawClouds, drawMask, textLines, TEXT_DEFAULT, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
+import { buildLines, drawSubs, drawClouds, drawMaskCached, textLines, TEXT_DEFAULT, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
 import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
@@ -217,8 +217,8 @@ export async function openEditor(P, onExit) {
     else R.draw(null);
     const c2 = over.getContext("2d");
     c2.clearRect(0, 0, over.width, over.height);
-    drawMask(c2, over.width, over.height, loc && loc.clip.mask);
-    poolN = 0; drawOverlays(c2, over.width, over.height, t, P.overlays, ovSource, makeCv);
+    drawMaskCached(c2, over.width, over.height, loc && loc.clip.mask, newCv);
+    poolN = 0; drawOverlays(c2, over.width, over.height, t, P.overlays, ovSource, makeCv, newCv);
     drawClouds(c2, over.width, over.height, t, P.clouds);
     if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
     if (P.texts.length) drawSubs(c2, over.width, over.height, t, tlines(), {});
@@ -329,6 +329,7 @@ export async function openEditor(P, onExit) {
   // ——— наложения: фото, стикеры и видео поверх основного; своя дорожка (этажи по слоям)
   let ovSel = null, odrag = null, ovTab = 0, poolN = 0;
   const ovVids = new Map(), ovImgs = new Map(), pool = [];
+  const newCv = (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; };
   const makeCv = (w, h) => { const c = pool[poolN] ||= document.createElement("canvas"); poolN++; c.width = w; c.height = h; return c; };
   const ovSize = (o) => { if (o.kind === "video") { const r = ovVids.get(o.id); return r && r.ok ? { w: r.w, h: r.h } : P.media[o.media] || null; } return P.images[o.image] || null; };
   function ovSource(o) {

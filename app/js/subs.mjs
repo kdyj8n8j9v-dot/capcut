@@ -179,6 +179,22 @@ export function drawMask(ctx, W, H, m0) {
   return true;
 }
 
+// Маска не меняется от кадра к кадру — считаем её один раз и дальше просто накладываем готовую (размытие края на 4K
+// дорогое: без этого каждый кадр считался бы секунды). make(w, h) → новый холст.
+const maskCache = new Map();
+export function drawMaskCached(ctx, W, H, m, make) {
+  if (!m || !m.shape || m.shape === "none") return false;
+  const key = W + "x" + H + JSON.stringify(m);
+  let c = maskCache.get(key);
+  if (!c) {
+    c = make(W, H); drawMask(c.getContext("2d"), W, H, m);
+    maskCache.set(key, c);
+    if (maskCache.size > 12) maskCache.delete(maskCache.keys().next().value);
+  }
+  ctx.drawImage(c, 0, 0);
+  return true;
+}
+
 function rgba(hex, a) {
   const n = parseInt((hex || "#000000").slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;

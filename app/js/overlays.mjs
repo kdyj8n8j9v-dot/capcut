@@ -1,6 +1,6 @@
 // Наложения: фото, стикеры и видео поверх основного видео. Один и тот же код рисует превью в приложении
 // и готовое видео на сборщике (worker/subs.mjs) — поэтому превью совпадает с итогом. Здесь нет ничего от браузера.
-import { drawMask } from "./subs.mjs";
+import { drawMaskCached } from "./subs.mjs";
 
 export const OV_DEFAULT = { x: 0.5, y: 0.5, scale: 0.6, rot: 0, opacity: 1, radius: 0, flip: false,
   in: "fade", inDur: 0.3, out: "fade", outDur: 0.3, loop: "none" };
@@ -46,7 +46,8 @@ export function ovPose(o0, t, W, H, srcW, srcH) {
 
 // Нарисовать все наложения момента t. src(o) → { img, w, h } — что рисовать (картинка, видео, холст) и его размер.
 // make(w, h) → новый холст (в браузере — document.createElement, на сборщике — createCanvas): нужен для масок и скруглений.
-export function drawOverlays(ctx, W, H, t, overlays, src, make) {
+// fresh(w, h) — холст, который можно хранить (для готовых масок); по умолчанию make.
+export function drawOverlays(ctx, W, H, t, overlays, src, make, fresh = make) {
   const list = (overlays || []).filter((o) => t >= o.start && t < o.end).sort((a, b) => (a.layer | 0) - (b.layer | 0));
   let any = false;
   for (const o of list) {
@@ -63,9 +64,8 @@ export function drawOverlays(ctx, W, H, t, overlays, src, make) {
       if (r > 0.5) { g.beginPath(); if (g.roundRect) g.roundRect(0, 0, ow, oh, r); else g.rect(0, 0, ow, oh); g.clip(); }
       g.drawImage(img, 0, 0, ow, oh);
       if (m) {
-        const mc = make(ow, oh);
-        drawMask(mc.getContext("2d"), ow, oh, m);   // чёрное там, где наложение должно исчезнуть
-        g.globalCompositeOperation = "destination-out"; g.drawImage(mc, 0, 0);
+        g.globalCompositeOperation = "destination-out";
+        drawMaskCached(g, ow, oh, m, fresh);   // чёрное там, где наложение должно исчезнуть (считается один раз)
       }
       img = c;
     }
