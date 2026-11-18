@@ -207,7 +207,12 @@ export async function openEditor(P, onExit) {
     v.addEventListener("seeked", draw);
     // счётчик новых кадров: пока видео играет, превью перерисовывает картинку только с новым кадром
     rec.frame = 0;
-    if (v.requestVideoFrameCallback) { rec.rvfc = true; const onF = () => { rec.frame++; v.requestVideoFrameCallback(onF); }; v.requestVideoFrameCallback(onF); }
+    // и отметка каждого показанного кадра: какой кадр исходника (mediaTime) и когда он на экране — по ней идут часы
+    if (v.requestVideoFrameCallback) {
+      rec.rvfc = true;
+      const onF = (n, m) => { rec.frame++; if (!v.paused && !v.seeking && m) { rec.mt = m.mediaTime; rec.mw = m.expectedDisplayTime || n; } v.requestVideoFrameCallback(onF); };
+      v.requestVideoFrameCallback(onF);
+    }
     // видео — настоящего размера прямо под картинкой превью (её закрывает холст). Раньше оно было 2×2 точки и прозрачным:
     // Safari такое видео считает невидимым и отдаёт меньше кадров (замер на iPad: 20 к/с вместо 30)
     v.src = url; rec.url = url; view.prepend(v); sizeVids();
@@ -341,7 +346,7 @@ export async function openEditor(P, onExit) {
     // iPad: звук каждого <audio> тоже надо один раз запустить касанием
     for (const [k, r] of vids) if (r.a && !r.aUnlocked && k !== loc.clip.media) { r.aUnlocked = true; const p = r.a.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.a.pause(); }).catch(() => {}); }
     if (rec && fastOn(rec)) { rec.unlocked = rec.aUnlocked = true; rec.v.pause(); startFast(rec, loc.clip, loc.local); }
-    else if (rec) { rec.unlocked = true; rec.vt = undefined; rec.rateT = 0; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
+    else if (rec) { rec.unlocked = true; rec.vt = undefined; rec.mt = null; rec.rateT = 0; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
     for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
     for (const a of sndEls.values()) if (a.el && !a.unlocked) { a.unlocked = true; const p = a.el.play(); p && p.then(() => syncSnd()).catch(() => {}); }
     syncOv(); syncSnd();
@@ -403,7 +408,13 @@ export async function openEditor(P, onExit) {
       if (now - (rec.rateT || 0) > 330) { rec.rateT = now; setRate(v, rateAt(c, prev), 0.12); }
       if (vt !== rec.vt) { rec.vt = vt; rec.vWall = now; rec.vLocal = outAt(c, vt); }
       const moving = !v.paused && !v.seeking && v.readyState >= 3;
-      const est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.12) : 0);   // досчёт между кадрами видео — до 0,12 с (на iPad время видео меняется рывками)
+      let est;
+      if (!fast && rec.mt != null && moving) {
+        // по отметке показанного кадра: сколько прошло с его показа × скорость видео, но не дальше ~1,5 кадра —
+        // время не убегает вперёд картинки (раньше убегало до 0,4 с исходника и потом стояло, ожидая видео)
+        const ahead = clamp((now - rec.mw) / 1000, 0, 0.05) * v.playbackRate;
+        est = outAt(c, Math.min(rec.mt + ahead, c.out));
+      } else est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.05) : 0);
       // плавно: не назад, не быстрее чем вдвое за кадр экрана (догнать), не дальше видео
       local = prev + clamp(est - prev, 0, step * 2);
       if (v.paused && !v.ended && !v.seeking && now - (rec.playT || 0) > 300) { rec.playT = now; v.play().catch(() => {}); }
@@ -425,7 +436,7 @@ export async function openEditor(P, onExit) {
       const n = P.clips[pi], nr = vids.get(n.media);
       t = startOf(pi);
       if (nr && nr.ok && fastOn(nr)) startFast(nr, n, 0);
-      else if (nr && nr.ok) { nr.vt = undefined; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
+      else if (nr && nr.ok) { nr.vt = undefined; nr.mt = null; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
     } else t = startOf(pi) + Math.max(0, local);
     const pf = window.__perf, p0 = pf && performance.now(), p0d = performance.now();
     tlMove();
