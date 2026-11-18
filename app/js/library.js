@@ -2,7 +2,7 @@
 import { h, icon, sheet, toast, fmtSize, fmtTime } from "./ui.js";
 import { cloud } from "./cloud.js";
 import { github } from "./github.js";
-import { library, ensure, addFromDevice, onMedia, busyOf } from "./media.js";
+import { library, ensure, addFromDevice, onMedia, busyOf, addImageFromDevice, packImages, addPackImage } from "./media.js";
 
 export function openLibrary({ onPick }) {
   let items = null, error = null, picked = [];
@@ -61,5 +61,57 @@ export function openLibrary({ onPick }) {
     if (recs.length) { onPick(recs); s.close(); toast("Не закрывайте приложение, пока оригинал загружается в MEGA", 5000); } else load();
   }
   function done() { const recs = picked.map((k) => items.find((m) => m.key === k)).filter(Boolean); s.close(); onPick(recs); }
+  load();
+}
+
+// Окно «Наложение»: что положить поверх основного видео.
+export function openOverlayPicker({ onImage, onVideo }) {
+  const file = h("input", { type: "file", accept: "image/*,video/*", hidden: true, onchange: fromDevice });
+  const list = h("div.list");
+  let items = null, error = null, q = "";
+  const body = h("div.lib", {},
+    h("button.item.accent", { onclick: () => file.click() }, icon("photo"), h("span.item-main", {}, h("b", {}, "Фото или видео с этого устройства"), h("small", {}, "Копия сама загрузится в MEGA — её возьмёт сборщик.")), file),
+    h("button.item.accent", { onclick: () => { s.close(); openLibrary({ onPick: (recs) => recs.forEach(onVideo) }); } }, icon("film"), h("span.item-main", {}, h("b", {}, "Видео из MEGA"), h("small", {}, "Из папки «Исходники»."))),
+    h("div.sec", {}, h("span", {}, "Для монтажа ПАК · картинки и стикеры"), h("button.link", { onclick: () => load(true) }, "Обновить")),
+    list);
+  const s = sheet("Наложение", body, { wide: true, onclose: () => off() });
+  const off = onMedia(render);
+  async function load(refresh) {
+    error = null; if (refresh) { items = null; render(); }
+    try { items = cloud.signedIn() ? await packImages(refresh) : []; } catch (e) { error = e.message; items = []; }
+    render();
+  }
+  function render() {
+    if (!cloud.signedIn()) return list.replaceChildren(h("p.muted.pad", {}, "Войдите в MEGA в «Настройках», чтобы видеть картинки из «Для монтажа ПАК»."));
+    if (!items) return list.replaceChildren(h("p.muted.pad", {}, "Ищу картинки…"));
+    if (error) return list.replaceChildren(h("p.muted.pad", {}, error));
+    if (!items.length) return list.replaceChildren(h("p.muted.pad", {}, "В «Для монтажа ПАК» не нашлось картинок (PNG, JPG, WebP)."));
+    const shown = items.filter((f) => !q || (f.path + "/" + f.name).toLowerCase().includes(q.toLowerCase()));
+    list.replaceChildren(items.length > 10 ? h("input.field", { placeholder: `Поиск среди ${items.length}`, value: q, oninput: (e) => { q = e.target.value; render(); list.querySelector("input").focus(); } }) : "",
+      ...shown.slice(0, 80).map((f) => h("button.item", { onclick: () => pick(f) }, icon("photo"),
+        h("span.item-main", {}, h("b", {}, f.name), h("small", {}, f.path.replace(/^Для монтажа ПАК\/?/, "") || "ПАК")))),
+      shown.length > 80 ? h("p.hint", {}, `Показаны первые 80 из ${shown.length}. Уточните поиск.`) : "");
+  }
+  async function pick(f) {
+    try { const rec = await addPackImage(f); s.close(); onImage(rec); } catch (e) { toast(e.message, 5000); }
+  }
+  async function fromDevice() {
+    const fs = [...file.files]; file.value = "";
+    for (const f of fs) {
+      try {
+        if (f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic)$/i.test(f.name)) {
+          const { rec, upload } = await addImageFromDevice(f);
+          upload.catch((e) => toast("Не удалось загрузить картинку в MEGA: " + e.message, 6000));
+          s.close(); onImage(rec);
+        } else {
+          if (!cloud.signedIn()) throw new Error("Сначала войдите в MEGA в «Настройках»: оригинал нужен сборщику");
+          const { rec, upload } = await addFromDevice(f);
+          upload.catch((e) => toast("Не удалось загрузить в MEGA: " + e.message, 6000));
+          if (!rec) throw new Error("Это устройство не показывает такой формат видео.");
+          s.close(); onVideo(rec);
+        }
+      } catch (e) { toast(e.message, 5000); }
+    }
+  }
   load();
 }

@@ -212,12 +212,25 @@ def render(project, out, draft=False):
     total = sum(round((s["out"] - s["in"]) * fps) for s in segs)
     vf = f"lut3d=file='{cube}':interp=tetrahedral,scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
     sub_in, vmap = [], ["-map", "0:v", "-vf", vf]
-    if (project.get("subs") or {}).get("lines") or (project.get("subs") or {}).get("clouds") or (project.get("subs") or {}).get("masks"):
+    layer = dict(project.get("subs") or {})
+    ovs = []
+    for o in project.get("overlays") or []:   # overlays: photos, stickers, videos on top — drawn by the app's own code too
+        o = dict(o)
+        if o.get("kind") == "video":
+            path = clip_path(clips[o["clip"]])
+            info = probe(path)
+            o.update(src=str(path), w=info["w"], h=info["h"])
+        if o.get("kind") == "image" and not o.get("file"):
+            continue
+        ovs.append(o)
+    if ovs:
+        layer["overlays"] = ovs
+    if layer.get("lines") or layer.get("clouds") or layer.get("masks") or layer.get("overlays"):
         # subtitles: the app's own drawing code renders a transparent strip (worker/subs.mjs); it is laid over the graded
         # picture already in 10-bit 4:2:2, so the grade never touches the text and the video stays 10-bit
         sub = work / "subs.mov"
         pj = work / "subs.json"
-        pj.write_text(json.dumps({"subs": project["subs"]}, ensure_ascii=False))
+        pj.write_text(json.dumps({"subs": {"style": {}, **layer}}, ensure_ascii=False))
         r = subprocess.run(["node", str(ROOT / "worker" / "subs.mjs"), str(pj), str(sub), f"{fps.numerator}/{fps.denominator}",
                             str(out_w), str(out_h), str(total)], capture_output=True, text=True, check=True)
         band = json.loads(r.stdout.strip().splitlines()[-1])

@@ -51,6 +51,7 @@ import json, sys
 print(json.dumps({"id": "selftest", "name": "selftest", "output": {"w": 2160, "h": 3840}, "clips": {"a": {"file": sys.argv[1]}},
                   "timeline": [{"clip": "a", "in": 1.0, "out": 2.0, "frame": {"scale": 1.2, "rot": 3}}, {"clip": "a", "in": 3.0, "out": 4.0}],
                   "grade": {"exposure": 0.2, "contrast": 0.2, "clarity": 0.3, "vignette": -0.3, "saturation": 0.1}, "audio": {"volume": 1},
+                  "overlays": [{"kind": "video", "clip": "a", "from": 0.5, "start": 0.2, "end": 1.8, "x": 0.68, "y": 0.3, "scale": 0.45, "radius": 0.2, "in": "pop", "mask": {"shape": "ellipse", "w": 0.95, "h": 0.95, "feather": 0.1}}],
                   "subs": {"style": {"in": "letters", "hl": "fill", "glow": 0.4}, "masks": [{"shape": "ellipse", "w": 0.95, "h": 0.8, "feather": 0.1, "start": 0, "end": 1}], "clouds": [{"start": 0.2, "end": 1.8, "x": 0.5, "y": 0.72, "w": 0.9, "h": 0.2, "a": 0.6}], "lines": [{"start": 0.1, "end": 1.9, "words": [{"text": "Проверка", "start": 0.1, "end": 0.9}, {"text": "субтитров", "start": 0.9, "end": 1.8}]}]}}, ensure_ascii=False))
 PY
     else
@@ -78,13 +79,26 @@ for i, f in enumerate((p.get("subs") or {}).get("fonts") or []):
         f["file"] = local
     else:
         print("свой шрифт не скачался — будет запасной", file=sys.stderr)
+# картинки-наложения: с устройства (папка приложения) или из «Для монтажа ПАК»; берём только оттуда
+for i, o in enumerate(p.get("overlays") or []):
+    if o.get("kind") != "image":
+        continue
+    path = o.get("path", "")
+    if not (path.startswith("Для монтажа ПАК/") or path.startswith("10 бит/.studio/media/")) or ".." in path:
+        continue
+    os.makedirs("work/ov", exist_ok=True)
+    local = os.path.abspath(f"work/ov/{i}{os.path.splitext(path)[1].lower()}")
+    if subprocess.run(["mega-get", "/" + path, local], capture_output=True).returncode == 0 and os.path.exists(local):
+        o["file"] = local
+    else:
+        print("картинка-наложение не скачалась — её не будет в видео", file=sys.stderr)
 p["id"] = sys.argv[3]
 print(json.dumps(p, ensure_ascii=False))
 PY
     fi
     name=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]));print((p.get("name") or p.get("id") or "edit").replace("/","-"))' work/project.json)
     echo "::add-mask::$name"
-    files=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]));u={s["clip"] for s in p["timeline"]};print("\n".join(p["clips"][k]["file"] for k in u))' work/project.json)
+    files=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]));u={s["clip"] for s in p["timeline"]}|{o["clip"] for o in p.get("overlays") or [] if o.get("kind")=="video"};print("\n".join(p["clips"][k]["file"] for k in u))' work/project.json)
     while IFS= read -r f; do echo "::add-mask::$f"; echo "::add-mask::${f%.*}"; ANY_SOURCE=1 bash scripts/cloud.sh pull "$f" </dev/null; [ -f "originals/$f" ] || { echo "оригинал не скачался" >&2; exit 1; }; done <<< "$files"
     # ход сборки → MEGA (приложение показывает проценты)
     if [ "$req" != selftest ]; then

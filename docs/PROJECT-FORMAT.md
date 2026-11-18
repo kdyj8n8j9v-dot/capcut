@@ -69,6 +69,10 @@ words:  { <ключ>: [ { text, start, end, em?, br?, nb?, ls?, ws? } ] }   сл
         (в т.ч. layer, mv, ds, de); ws — свои настройки слова
 subs:   { on, style }
 clouds: [ { id, start, end, x, y, w, h, a, soft, color, fade } ]
+overlays: [ { id, kind: "image"|"video", image?|media?, from? (видео: секунда в исходнике), start, end, layer,
+              x, y (центр, доли кадра), scale (ширина в долях кадра), rot, opacity, radius, flip,
+              in, inDur, out, outDur, loop, mask? } ]          варианты анимаций — OV_IN / OV_OUT / OV_LOOP в app/js/overlays.mjs
+images:   { <ключ>: { name, w, h, path } }          path — файл в MEGA («Для монтажа ПАК/…» или «10 бит/.studio/media/…»)
 ```
 
 Строки субтитров не хранятся — приложение собирает их из `words` и клипов на лету (`buildLines` в `app/js/subs.mjs`),

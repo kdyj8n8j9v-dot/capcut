@@ -2,12 +2,13 @@
 import { h, icon, sheet, toast, ask, askText, fmtTime, clamp } from "./ui.js";
 import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
-import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords } from "./media.js";
+import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage } from "./media.js";
+import { drawOverlays, ovAt, OV_DEFAULT, OV_IN, OV_OUT, OV_LOOP } from "./overlays.mjs";
 import { buildLines, drawSubs, drawClouds, drawMask, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
 import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
-import { openLibrary } from "./library.js";
+import { openLibrary, openOverlayPicker } from "./library.js";
 import { openExport } from "./export.js";
 import { pushProject, remoteNewer } from "./sync.js";
 
@@ -27,7 +28,7 @@ const GROUPS = [
 const BAND_COLORS = ["#ff453a", "#ff9f0a", "#ffd60a", "#30d158", "#40c8e0", "#0a84ff", "#bf5af2", "#ff375f"];
 
 export async function openEditor(P, onExit) {
-  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= [];
+  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {};
   const root = document.getElementById("app");
   let t = 0, sel = null, pps = 40, playing = false, pi = 0, panel = null, alive = true, lastTick = 0;
   const undo = [], redo = [];
@@ -50,7 +51,7 @@ export async function openEditor(P, onExit) {
   let shown = null;
 
   // ——— история и сохранение
-  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds });
+  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds, overlays: P.overlays, images: P.images });
   let saveT;
   function save() {
     clearTimeout(saveT);
@@ -72,7 +73,7 @@ export async function openEditor(P, onExit) {
       if (!r || !alive) return;
       if (dirty && !(await ask("В облаке новая версия проекта", (r.by === "claude" ? "Её прислал чат «Монтаж»." : "Она сохранена с другого вашего устройства.") + " Загрузить её? Ваши последние правки на этом устройстве заменятся.", "Загрузить", false))) return;
       for (const k of Object.keys(P)) delete P[k];
-      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= [];
+      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {};
       dirty = false; undo.length = redo.length = 0; sel = null; cloudSel = null; subSel = []; subAll = true; subWord = null;
       await db.put("projects", P); titleBtn.textContent = P.name;
       pause(); await loadAll(); fit(); renderPanel(); syncBar(); seek(Math.min(t, total()));
@@ -102,7 +103,7 @@ export async function openEditor(P, onExit) {
   const side = h("aside.panel", { hidden: true });
   const tNow = h("span.t-now", {}, "0:00,0"), tAll = h("span.t-all", {}, "0:00");
   const playBtn = h("button.round.play", { onclick: toggle, "aria-label": "Пуск" }, icon("play", 22));
-  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), cloudRow = h("div.tl-clouds"), inner = h("div.tl-inner", {}, ruler, track, subRow, cloudRow);
+  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), cloudRow = h("div.tl-clouds"), ovRow = h("div.tl-ovs"), inner = h("div.tl-inner", {}, ruler, track, ovRow, subRow, cloudRow);
   scroll.append(inner);
   const titleBtn = h("button.title", { onclick: rename }, P.name);
   const fmtBtn = h("button.chip", { onclick: pickFormat, "aria-label": "Формат" }, P.format);
@@ -110,7 +111,7 @@ export async function openEditor(P, onExit) {
   const redoBtn = h("button.round", { onclick: () => restore(redo, undo), "aria-label": "Вернуть" }, icon("redo", 20));
   const tool = (id, ic, label, fn) => h("button.tool", { "data-tool": id, onclick: fn }, icon(ic), h("span", {}, label));
   const tools = h("nav.tools", {},
-    tool("media", "plus", "Медиа", addMedia), tool("split", "split", "Разрезать", split),
+    tool("media", "plus", "Медиа", addMedia), tool("overlay", "layers", "Наложение", () => openPanel("overlay")), tool("split", "split", "Разрезать", split),
     tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("mask", "mask", "Маска", () => openPanel("mask")), tool("color", "color", "Цвет", () => openPanel("color")),
     tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
   const ed = h("div.ed", {},
@@ -131,7 +132,7 @@ export async function openEditor(P, onExit) {
     empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = none;
     for (const b of tools.children) {
       const id = b.dataset.tool;
-      b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel);
+      b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel);
       b.classList.toggle("on", id === panel);
     }
     tAll.textContent = fmtTime(total());
@@ -189,6 +190,7 @@ export async function openEditor(P, onExit) {
   }
   async function loadAll() {
     await Promise.all(Object.keys(P.media).map(video));
+    P.overlays.forEach(loadOv);
     layout(); seek(t);
     restoreMissing();
   }
@@ -216,6 +218,7 @@ export async function openEditor(P, onExit) {
     const c2 = over.getContext("2d");
     c2.clearRect(0, 0, over.width, over.height);
     drawMask(c2, over.width, over.height, loc && loc.clip.mask);
+    poolN = 0; drawOverlays(c2, over.width, over.height, t, P.overlays, ovSource, makeCv);
     drawClouds(c2, over.width, over.height, t, P.clouds);
     if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
   }
@@ -232,6 +235,7 @@ export async function openEditor(P, onExit) {
     }
     if (!fromScroll) scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
+    syncOv();
     draw();
     if ((panel === "frame" || panel === "mask") && loc?.clip.id !== shown && !ptrs.size) renderPanel();
   }
@@ -246,9 +250,11 @@ export async function openEditor(P, onExit) {
     for (const [k, r] of vids) if (k !== loc.clip.media && !r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.v.pause(); }).catch(() => {}); }
     const rec = vids.get(loc.clip.media);
     if (rec) { rec.unlocked = true; rec.v.play().catch(() => {}); }
+    for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
+    syncOv();
     syncBar(); requestAnimationFrame(tick);
   }
-  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncBar(); }
+  function pause() { stopAt = null; if (!playing) return; playing = false; for (const r of vids.values()) r.v.pause(); syncOv(); syncBar(); }
   function toggle() { playing ? pause() : play(); }
   function tick(now) {
     if (!playing || !alive) return;
@@ -266,6 +272,7 @@ export async function openEditor(P, onExit) {
     } else t = startOf(pi) + Math.max(0, local);
     scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
+    syncOv();
     draw();
     if (stopAt != null && t >= stopAt) return pause();
     requestAnimationFrame(tick);
@@ -302,7 +309,7 @@ export async function openEditor(P, onExit) {
     const tlEl = ed.querySelector(".tl"), narrow = innerWidth < 820;
     // на телефоне с открытой панелью превью важнее: таймлайн низкий и прокручивается
     const cap = narrow && panel ? 104 : Math.round(innerHeight * (narrow ? 0.3 : 0.45));
-    const rows = ruler.offsetHeight + track.offsetHeight + (subRow.hidden ? 0 : subRow.offsetHeight + 3) + (cloudRow.hidden ? 0 : cloudRow.offsetHeight + 3);
+    const rows = ruler.offsetHeight + track.offsetHeight + (subRow.hidden ? 0 : subRow.offsetHeight + 3) + (cloudRow.hidden ? 0 : cloudRow.offsetHeight + 3) + (ovRow.hidden ? 0 : ovRow.offsetHeight + 3);
     const want = Math.min(cap, settings.get("tlh") || Math.max(112, rows + 30));
     if (Math.abs(tlEl.offsetHeight - want) > 2) tlEl.style.height = want + "px";
   }
@@ -317,6 +324,112 @@ export async function openEditor(P, onExit) {
     if (st.out !== "none") out.push(h("i.aout", { style: { width: Math.min(len, st.outDur) * pps + "px" } }));
     return out;
   }
+  // ——— наложения: фото, стикеры и видео поверх основного; своя дорожка (этажи по слоям)
+  let ovSel = null, odrag = null, ovTab = 0, poolN = 0;
+  const ovVids = new Map(), ovImgs = new Map(), pool = [];
+  const makeCv = (w, h) => { const c = pool[poolN] ||= document.createElement("canvas"); poolN++; c.width = w; c.height = h; return c; };
+  const ovSize = (o) => { if (o.kind === "video") { const r = ovVids.get(o.id); return r && r.ok ? { w: r.w, h: r.h } : P.media[o.media] || null; } return P.images[o.image] || null; };
+  function ovSource(o) {
+    if (o.kind === "video") { const r = ovVids.get(o.id); return r && r.ok ? { img: r.v, w: r.w, h: r.h } : null; }
+    const r = ovImgs.get(o.image); return r && r.img ? r : null;
+  }
+  async function loadOv(o) {
+    if (o.kind === "video") {
+      if (ovVids.has(o.id)) return;
+      const r = { v: null, ok: false, w: 0, h: 0 }; ovVids.set(o.id, r);
+      const url = await mediaUrl(o.media);
+      if (!url) { ovVids.delete(o.id); return; }
+      const v = h("video.src", { playsInline: true, preload: "auto", muted: true, crossOrigin: "anonymous" });
+      v.muted = true; v.setAttribute("playsinline", ""); v.setAttribute("muted", "");
+      r.v = v;
+      v.addEventListener("loadeddata", () => { r.ok = true; r.w = v.videoWidth; r.h = v.videoHeight; syncOv(); draw(); });
+      v.addEventListener("seeked", draw);
+      v.src = url; ed.append(v);
+    } else {
+      if (ovImgs.has(o.image)) return;
+      ovImgs.set(o.image, { loading: true });
+      try {
+        const url = (await imageUrl(o.image)) || (await ensureImage(o.image, P.images[o.image]));
+        if (!url) throw 0;
+        const img = new Image(); img.src = url; await img.decode();
+        ovImgs.set(o.image, { img, w: img.naturalWidth, h: img.naturalHeight }); draw(); layoutOvs();
+      } catch { ovImgs.delete(o.image); }
+    }
+  }
+  // видео-наложения идут вместе с основным: на паузе стоят на нужном кадре, при воспроизведении — играют
+  function syncOv() {
+    for (const o of P.overlays) {
+      if (o.kind !== "video") continue;
+      const r = ovVids.get(o.id); if (!r || !r.ok) continue;
+      const on = t >= o.start && t < o.end, want = (o.from || 0) + (t - o.start);
+      if (!on) { if (!r.v.paused) r.v.pause(); continue; }
+      if (playing) { if (r.v.paused) { r.v.currentTime = want; r.v.play().catch(() => {}); } else if (Math.abs(r.v.currentTime - want) > 0.25) r.v.currentTime = want; }
+      else { if (!r.v.paused) r.v.pause(); if (Math.abs(r.v.currentTime - want) > 0.02) r.v.currentTime = want; }
+    }
+  }
+  const freeLayer = (s, e, skip) => { for (let n = 0; ; n++) if (!P.overlays.some((o) => o !== skip && (o.layer | 0) === n && o.start < e && o.end > s)) return n; };
+  function placeOverlay(o) {
+    const tot = total(), len = Math.min(o.end - o.start, Math.max(0.5, tot));
+    o.start = Math.max(0, Math.min(t, tot - len)); o.end = Math.min(tot, o.start + len);
+    o.layer = freeLayer(o.start, o.end);
+    P.overlays.push(o); ovSel = o.id; loadOv(o);
+    if (panel !== "overlay") { panel = "overlay"; requestAnimationFrame(fit); }
+    layoutOvs(); syncOv(); draw(); renderPanel(); syncBar(); save();
+  }
+  function addOverlayImage(rec) {
+    begin(); pause();
+    P.images[rec.key] = { name: rec.name, w: rec.w, h: rec.h, path: rec.path };
+    const o = out(), fit0 = Math.min(0.6, 0.6 * (o.h / o.w) * (rec.w / rec.h));
+    placeOverlay({ id: uid(), kind: "image", image: rec.key, start: 0, end: 3, ...OV_DEFAULT, scale: Math.round(fit0 * 100) / 100 });
+  }
+  function addOverlayVideo(rec) {
+    begin(); pause();
+    P.media[rec.key] = { name: rec.name, dur: rec.dur, w: rec.w, h: rec.h };
+    placeOverlay({ id: uid(), kind: "video", media: rec.key, from: 0, start: 0, end: rec.dur, ...OV_DEFAULT, scale: 0.5, radius: 0.15 });
+  }
+  function removeOverlay() { begin(); P.overlays = P.overlays.filter((o) => o.id !== ovSel); const r = ovVids.get(ovSel); if (r && r.v) { r.v.src = ""; r.v.remove(); } ovVids.delete(ovSel); ovSel = null; layoutOvs(); draw(); renderPanel(); syncBar(); save(); }
+  const ovName = (o) => (o.kind === "video" ? P.media[o.media]?.name : P.images[o.image]?.name) || "Наложение";
+  function layoutOvs() {
+    ovRow.style.width = total() * pps + "px"; ovRow.hidden = !P.overlays.length;
+    const n = Math.max(0, ...P.overlays.map((o) => (o.layer | 0) + 1));
+    ovRow.replaceChildren(...Array.from({ length: n }, (_, k) => h("div.orow", {}, P.overlays.filter((o) => (o.layer | 0) === n - 1 - k).map((o) => {
+      const r = o.kind === "image" ? ovImgs.get(o.image) : null;
+      return h("div.ov" + (o.id === ovSel ? ".sel" : "") + (o.kind === "video" ? ".vid" : ""), { "data-id": o.id, style: { left: o.start * pps + "px", width: Math.max(8, (o.end - o.start) * pps - 2) + "px", ...(r && r.img ? { backgroundImage: `url(${r.img.src})` } : {}) } },
+        h("span", {}, icon(o.kind === "video" ? "film" : "photo", 12), ovName(o)), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }));
+    }))));
+    autoTl(); reveal(ovRow.querySelector(".ov.sel"));
+  }
+  function selectOverlay(id) {
+    ovSel = id; pause();
+    const o = P.overlays.find((x) => x.id === id);
+    if (o && (t < o.start || t >= o.end)) seek(o.start + Math.min(0.3, (o.end - o.start) / 2));
+    if (panel !== "overlay") { panel = "overlay"; requestAnimationFrame(fit); }
+    layoutOvs(); renderPanel(); syncBar();
+  }
+  ovRow.addEventListener("click", (e) => { const el = e.target.closest(".ov"); if (!el || ovRow.dataset.drag) return; e.stopPropagation(); selectOverlay(el.dataset.id); });
+  ovRow.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".ov.sel"); if (!el || e.button > 0) return;
+    const o = P.overlays.find((x) => x.id === el.dataset.id);
+    e.preventDefault(); pause();
+    odrag = { o, el, side: e.target.dataset.side || "m", x: e.clientX, s0: o.start, e0: o.end, f0: o.from || 0, id: e.pointerId, moved: false };
+    ovRow.setPointerCapture(e.pointerId);
+  });
+  ovRow.addEventListener("pointermove", (e) => {
+    if (!odrag || e.pointerId !== odrag.id) return;
+    const d = (e.clientX - odrag.x) / pps, o = odrag.o, tot = total(), len = odrag.e0 - odrag.s0;
+    if (!odrag.moved) { if (Math.abs(e.clientX - odrag.x) < 4) return; odrag.moved = true; begin(); }
+    const vid = o.kind === "video", dur = vid ? (P.media[o.media]?.dur || 1e9) : 1e9;
+    if (odrag.side === "l") {   // левый край: у видео сдвигается и точка начала в исходнике
+      const lo = vid ? Math.max(0, odrag.s0 - odrag.f0) : 0;
+      o.start = clamp(odrag.s0 + d, lo, o.end - 0.2); if (vid) o.from = odrag.f0 + (o.start - odrag.s0);
+    } else if (odrag.side === "r") o.end = clamp(odrag.e0 + d, o.start + 0.2, Math.min(tot, o.start + dur - (o.from || 0)));
+    else { o.start = clamp(odrag.s0 + d, 0, Math.max(0, tot - len)); o.end = o.start + len; }
+    odrag.el.style.left = o.start * pps + "px"; odrag.el.style.width = Math.max(8, (o.end - o.start) * pps - 2) + "px";
+    syncOv(); draw();
+  });
+  const odragEnd = (e) => { if (!odrag || e.pointerId !== odrag.id) return; const m = odrag.moved; odrag = null; if (m) { ovRow.dataset.drag = "1"; setTimeout(() => delete ovRow.dataset.drag, 60); layoutOvs(); syncOv(); draw(); save(); } };
+  ovRow.addEventListener("pointerup", odragEnd); ovRow.addEventListener("pointercancel", odragEnd);
+
   // ——— облака: отдельные объекты на своей дорожке
   let cloudSel = null, cdrag = null;
   function layoutClouds() {
@@ -513,7 +626,7 @@ export async function openEditor(P, onExit) {
     const marks = [];
     for (let s = 0; s <= tot + 1e-6; s += step) marks.push(h("span", { style: { left: s * pps + "px" } }, step < 1 ? fmtTime(s, true) : fmtTime(s)));
     ruler.replaceChildren(...marks); ruler.style.width = tot * pps + "px";
-    relines(); layoutClouds(); layoutBusy(); syncBar();
+    relines(); layoutClouds(); layoutOvs(); layoutBusy(); syncBar();
   }
   function layoutBusy() {
     for (const el of track.querySelectorAll(".clip")) {
@@ -555,7 +668,7 @@ export async function openEditor(P, onExit) {
     for (const c of track.querySelectorAll(".clip")) c.classList.toggle("sel", c.dataset.id === sel);
     syncBar();
   });
-  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow) { sel = null; layout(); } });
+  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow) { sel = null; layout(); } });
   track.addEventListener("pointerdown", (e) => {
     const el = e.target.closest(".clip");
     if (!el || e.button > 0) return;
@@ -634,6 +747,7 @@ export async function openEditor(P, onExit) {
     sel = b.id; layout(); seek(t); save();
   }
   function remove() {
+    if (panel === "overlay" && ovSel) return removeOverlay();
     if (panel === "cloud" && cloudSel) return removeCloud();
     const i = P.clips.findIndex((c) => c.id === sel);
     if (i < 0) return;
@@ -743,6 +857,47 @@ export async function openEditor(P, onExit) {
           m.shape === "rect" ? msl("Скругление углов", "round", 0, 1) : null,
           msl("Поворот", "rot", -180, 180, (v) => Math.round(v) + "°", 1), msl("Растушёвка края", "feather", 0, 0.5),
           h("button.check" + (m.invert ? ".on" : ""), { onclick: () => { begin(); c.mask.invert = !m.invert; renderPanel(); draw(); save(); } }, h("i", {}, m.invert ? icon("check", 14) : null), "Наоборот: закрыть то, что внутри")].filter(Boolean) : []));
+    } else if (panel === "overlay") {
+      const o = P.overlays.find((x) => x.id === ovSel);
+      const add = h("button.btn.primary.wide", { onclick: () => { pause(); openOverlayPicker({ onImage: addOverlayImage, onVideo: addOverlayVideo }); } }, icon("plus", 18), "Добавить наложение здесь");
+      if (!o) return side.replaceChildren(head("Наложение"),
+        h("p.hint", {}, "Фото, стикер или видео поверх основного видео — например, картинка-в-картинке, логотип, скриншот. Каждое наложение живёт на своей дорожке: его можно двигать по времени, тянуть за края, поднимать выше других."),
+        add, P.overlays.length ? h("p.hint", {}, "Чтобы изменить наложение, нажмите на него на дорожке внизу или прямо на видео.") : null);
+      const ch = (fn) => { begin(); fn(); layoutOvs(); syncOv(); draw(); renderPanel(); save(); };
+      const osl = (label, key, min, max, show, step) => slider(label, () => o[key] ?? OV_DEFAULT[key], (v) => { o[key] = v; }, { min, max, step, def: OV_DEFAULT[key], show });
+      const pct = (v) => Math.round(v * 100), sec = (v) => v.toFixed(2).replace(".", ",") + " с";
+      const tiles = (list, on, pick) => h("div.tiles", {}, list.map(([k, n]) => h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k) }, n)));
+      const sz = ovSize(o) || { w: 1, h: 1 }, fr = out(), cover = Math.max(1, (fr.h / fr.w) * (sz.w / sz.h));
+      const maxL = Math.max(0, ...P.overlays.map((x) => x.layer | 0));
+      const m = o.mask && o.mask.shape !== "none" ? o.mask : null;
+      let body;
+      if (ovTab === 0) body = [
+        h("p.hint", {}, "Двигайте пальцем прямо на видео, двумя пальцами — размер и поворот."),
+        h("div.seg", {}, h("button", { onclick: () => ch(() => Object.assign(o, { x: 0.5, y: 0.5, scale: Math.round(cover * 100) / 100, rot: 0 })) }, "На весь кадр"),
+          h("button", { onclick: () => ch(() => Object.assign(o, { x: 0.5, y: 0.5 })) }, "По центру")),
+        osl("Размер", "scale", 0.05, 2.5, pct), osl("Прозрачность", "opacity", 0, 1, pct), osl("Поворот", "rot", -180, 180, (v) => Math.round(v) + "°", 1),
+        osl("Скругление углов", "radius", 0, 1, pct),
+        h("button.check" + (o.flip ? ".on" : ""), { onclick: () => ch(() => { o.flip = !o.flip; }) }, h("i", {}, o.flip ? icon("check", 14) : null), "Отразить зеркально"),
+        h("div.layers", {}, h("small.muted", {}, "Слой"),
+          h("button", { disabled: !(o.layer | 0), onclick: () => ch(() => { o.layer = Math.max(0, (o.layer | 0) - 1); }) }, "Ниже"),
+          h("button", { onclick: () => ch(() => { o.layer = (o.layer | 0) + 1; }) }, "Выше"),
+          h("small.muted", {}, `${(o.layer | 0) + 1} из ${maxL + 1}`))];
+      else if (ovTab === 1) body = [
+        h("div.sl-top", {}, "Появление"), tiles(OV_IN, o.in ?? OV_DEFAULT.in, (k) => ch(() => { o.in = k; })), (o.in ?? OV_DEFAULT.in) !== "none" ? osl("Длительность появления", "inDur", 0.05, 2, sec) : null,
+        h("div.sl-top", {}, "Исчезание"), tiles(OV_OUT, o.out ?? OV_DEFAULT.out, (k) => ch(() => { o.out = k; })), (o.out ?? OV_DEFAULT.out) !== "none" ? osl("Длительность исчезания", "outDur", 0.05, 2, sec) : null,
+        h("div.sl-top", {}, "Пока на экране"), tiles(OV_LOOP, o.loop ?? OV_DEFAULT.loop, (k) => ch(() => { o.loop = k; }))];
+      else body = [
+        h("p.hint", {}, "Оставляет видимой только часть наложения, края можно растушевать."),
+        tiles(MASK_SHAPES, m ? m.shape : "none", (k) => ch(() => { if (k === "none") delete o.mask; else o.mask = { ...MASK_DEFAULT, w: 0.9, h: 0.9, ...(o.mask || {}), shape: k }; })),
+        ...(m ? [slider("Ширина", () => o.mask.w, (v) => { o.mask.w = v; }, { min: 0.05, max: 1.5, def: 0.9 }), slider("Высота", () => o.mask.h, (v) => { o.mask.h = v; }, { min: 0.03, max: 1.5, def: 0.9 }),
+          slider("Растушёвка края", () => o.mask.feather, (v) => { o.mask.feather = v; }, { min: 0, max: 0.5, def: MASK_DEFAULT.feather }),
+          slider("Поворот маски", () => o.mask.rot, (v) => { o.mask.rot = v; }, { min: -180, max: 180, step: 1, def: 0, show: (v) => Math.round(v) + "°" }),
+          h("button.check" + (m.invert ? ".on" : ""), { onclick: () => ch(() => { o.mask.invert = !m.invert; }) }, h("i", {}, m.invert ? icon("check", 14) : null), "Наоборот: убрать то, что внутри")] : [])];
+      side.replaceChildren(head("Наложение"),
+        h("div.ov-name", {}, icon(o.kind === "video" ? "film" : "photo", 16), h("span", {}, ovName(o))),
+        h("div.seg.scroll.tabs", {}, ["Вид", "Анимация", "Маска"].map((n, i) => h("button" + (i === ovTab ? ".on" : ""), { onclick: () => { ovTab = i; renderPanel(); } }, n))),
+        h("div.sliders", {}, body.filter(Boolean)),
+        add, h("button.btn.wide.danger", { onclick: removeOverlay }, "Удалить наложение"));
     } else if (panel === "cloud") {
       const c = P.clouds.find((x) => x.id === cloudSel);
       const csl = (label, key, min, max, show) => slider(label, () => c[key] ?? CLOUD_DEFAULT[key], (v) => { c[key] = v; }, { min, max, def: CLOUD_DEFAULT[key], show });
@@ -766,13 +921,19 @@ export async function openEditor(P, onExit) {
   canvas.addEventListener("pointerdown", (e) => {
     const cl = panel === "cloud" && P.clouds.find((x) => x.id === cloudSel);
     const mk = panel === "mask" && target()?.mask;
-    const mode = panel === "frame" ? "frame" : mk ? "mask" : cl ? "cloud" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
+    if (panel === "overlay" && ptrs.size === 0) {   // выбрать наложение пальцем прямо на видео
+      const r = canvas.getBoundingClientRect(), hit = ovAt(P.overlays, t, r.width, r.height, e.clientX - r.left, e.clientY - r.top, ovSize);
+      if (hit && hit.id !== ovSel) selectOverlay(hit.id);
+    }
+    const ov = panel === "overlay" && P.overlays.find((x) => x.id === ovSel && t >= x.start && t < x.end);
+    const mode = panel === "frame" ? "frame" : ov ? "ov" : mk ? "mask" : cl ? "cloud" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
     if (!mode) { if (ptrs.size === 0) toggle(); return; }
     const c = mode === "frame" ? target() : null; if (mode === "frame" && !c) return;
     canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e);
     if (mode === "frame" && ptrs.size === 1) begin();
     const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
     if (mode === "frame") g0 = { mode, c, fr: { ...(c.frame ||= { ...FRAME_DEFAULT }) }, x: ps[0].clientX, y: ps[0].clientY, d };
+    else if (mode === "ov") { const a = ps[1] ? Math.atan2(ps[1].clientY - ps[0].clientY, ps[1].clientX - ps[0].clientX) : 0; g0 = { mode, o: ov, s0: { x: ov.x ?? 0.5, y: ov.y ?? 0.5, scale: ov.scale ?? OV_DEFAULT.scale, rot: ov.rot || 0 }, a, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
     else if (mode === "mask") g0 = { mode: "cloud", cl: mk, s0: { x: mk.x ?? 0.5, y: mk.y ?? 0.5, w: mk.w ?? MASK_DEFAULT.w, h: mk.h ?? MASK_DEFAULT.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else if (mode === "cloud") g0 = { mode, cl, s0: { x: cl.x, y: cl.y, w: cl.w, h: cl.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else { const st = subApi.cur(); g0 = { mode, s0: { x: st.x, y: st.y, size: st.size }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
@@ -785,6 +946,11 @@ export async function openEditor(P, onExit) {
     if (g0.mode === "frame") {
       const fr = g0.c.frame;
       if (k) fr.scale = clamp(g0.fr.scale * k, 0.2, 4); else { fr.x = clamp(g0.fr.x + dx, -1, 1); fr.y = clamp(g0.fr.y + dy, -1, 1); }
+    } else if (g0.mode === "ov") {
+      if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
+      const o = g0.o;
+      if (k) { o.scale = clamp(g0.s0.scale * k, 0.03, 4); const a = Math.atan2(ps[1].clientY - ps[0].clientY, ps[1].clientX - ps[0].clientX); let rot = g0.s0.rot + (a - g0.a) * 180 / Math.PI; rot = ((rot + 540) % 360) - 180; o.rot = Math.abs(rot) < 3 ? 0 : Math.round(rot); }
+      else { const x = clamp(g0.s0.x + dx, -0.5, 1.5), y = clamp(g0.s0.y + dy, -0.5, 1.5); o.x = Math.abs(x - 0.5) < 0.015 ? 0.5 : x; o.y = Math.abs(y - 0.5) < 0.015 ? 0.5 : y; }
     } else if (g0.mode === "cloud") {
       if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
       const c = g0.cl;
@@ -803,6 +969,7 @@ export async function openEditor(P, onExit) {
     const g = g0; if (!ptrs.size) g0 = null;
     if (ptrs.size) return;
     if ((g?.mode === "subs" || g?.mode === "cloud") && !g.moved) return toggle();
+    if (g?.mode === "ov" && !g.moved) return;
     renderPanel(); save();
   };
   canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
@@ -820,6 +987,7 @@ export async function openEditor(P, onExit) {
     if (dirty && cloud.signedIn()) pushProject({ ...P, updated: Date.now() }).catch(() => {});
     alive = false; ro.disconnect(); offMedia(); document.removeEventListener("keydown", onKey);
     for (const r of vids.values()) { r.v.src = ""; r.v.remove(); }
+    for (const r of ovVids.values()) if (r.v) { r.v.src = ""; r.v.remove(); }
     P.updated = Date.now(); P.duration = total();
     db.put("projects", P).finally(onExit);
   }
@@ -828,5 +996,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }

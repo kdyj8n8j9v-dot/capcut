@@ -10,7 +10,8 @@ import { packFont } from "./fonts.js";
 const safe = (n) => (n || "Ролик").replace(/[\/\\:*?"<>|]/g, "-").trim() || "Ролик";
 const r3 = (x) => Math.round(x * 1000) / 1000;
 export function buildJob(P, out, req) {
-  const used = [...new Set(P.clips.map((c) => c.media))];
+  const ovs = (P.overlays || []).filter((o) => o.start < P.clips.reduce((x, c) => x + c.out - c.in, 0));
+  const used = [...new Set([...P.clips.map((c) => c.media), ...ovs.filter((o) => o.kind === "video").map((o) => o.media)])];
   const style = normStyle(P.subs?.style), lines = P.subs?.on ? buildLines(P.clips, P.words || {}, style) : [];
   const dur = P.clips.reduce((x, c) => x + c.out - c.in, 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
   const masks = []; { let at = 0; for (const c of P.clips) { const len = c.out - c.in; if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
@@ -22,6 +23,8 @@ export function buildJob(P, out, req) {
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
     timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1 },
+    ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
+      ...(o.kind === "video" ? { clip: media, from: r3(o.from || 0) } : { path: P.images?.[image]?.path || "" }) })).filter((o) => o.kind === "video" || o.path) } : {}),
     ...(lines.length || clouds.length || masks.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(masks.length ? { masks } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
   };
 }
@@ -58,7 +61,8 @@ export function openExport(P, out) {
       if (!cloud.signedIn()) throw new Error("Войдите в MEGA в «Настройках».");
       if (!github.has()) throw new Error("Добавьте токен GitHub в «Настройках».");
       progress("send");
-      for (const k of new Set(P.clips.map((c) => c.media))) {
+      for (const o of P.overlays || []) if (o.kind === "image" && busyOf(o.image)?.text?.startsWith("Загружаю")) throw new Error("Картинка-наложение ещё загружается в MEGA. Дождитесь окончания загрузки и попробуйте снова.");
+      for (const k of new Set([...P.clips.map((c) => c.media), ...(P.overlays || []).filter((o) => o.kind === "video").map((o) => o.media)])) {
         if (busyOf(k)?.text?.startsWith("Загружаю") || !(await isUploaded(k))) throw new Error("Оригинал ещё загружается в MEGA. Дождитесь окончания загрузки и попробуйте снова.");
       }
       const req = "e" + uid(), job = buildJob(P, out, req);

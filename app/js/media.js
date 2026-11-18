@@ -155,3 +155,56 @@ export async function ensureWords(key, name) {
   if (busy.has(key)) throw new Error("Файл ещё обрабатывается. Попробуйте, когда загрузка закончится.");
   try { setBusy(key, "Распознаю речь"); await prepare({ key, name }); return await pull(); } finally { setBusy(key, null); }
 }
+
+// ——— картинки для наложений: с устройства (копия уходит в MEGA «10 бит/.studio/media», её берёт сборщик)
+// и из «Для монтажа ПАК» (стикеры, PNG). На устройстве хранятся в blobs под ключом "img:<ключ>".
+const IMG = /\.(png|jpe?g|webp|gif)$/i;
+const extOf = (n) => (n.match(/\.[^.]+$/) || [".png"])[0].toLowerCase();
+export async function imageUrl(key) {
+  if (urls.has("img:" + key)) return urls.get("img:" + key);
+  const b = await db.get("blobs", "img:" + key);
+  if (!b) return null;
+  const u = URL.createObjectURL(b); urls.set("img:" + key, u); return u;
+}
+async function imgSize(blob) {
+  try { const b = await createImageBitmap(blob); const r = { w: b.width, h: b.height }; b.close && b.close(); return r; }
+  catch { throw new Error("Эту картинку не открыть. Подходят PNG, JPG и WebP."); }
+}
+export async function addImageFromDevice(file) {
+  if (!cloud.signedIn()) throw new Error("Сначала войдите в MEGA в «Настройках»: картинка нужна сборщику");
+  const key = await nameKey(file.name + ":" + file.size), path = PATHS.media + "/" + key + extOf(file.name);
+  const size = await imgSize(file);
+  await db.put("blobs", file, "img:" + key);
+  const upload = (async () => {
+    try { setBusy(key, "Загружаю в MEGA", 0); await cloud.upload(PATHS.media, key + extOf(file.name), file, (p) => setBusy(key, "Загружаю в MEGA", p)); }
+    finally { setBusy(key, null); }
+  })();
+  return { rec: { key, name: file.name.normalize("NFC"), ...size, path }, upload };
+}
+export async function packImages(refresh) {
+  let list = settings.get("packImages");
+  if (!list || refresh) {
+    list = (await cloud.find(PATHS.pack, IMG)).map((f) => ({ name: f.name, path: f.path })).sort((a, b) => (a.path + a.name).localeCompare(b.path + b.name, "ru"));
+    settings.set("packImages", list);
+  }
+  return list;
+}
+export async function addPackImage(f) {
+  const full = f.path + "/" + f.name, key = await nameKey(full);
+  let blob = await db.get("blobs", "img:" + key);
+  if (!blob) {
+    setBusy(key, "Скачиваю", 0);
+    try { blob = await cloud.download(f.path, f.name, (p) => setBusy(key, "Скачиваю", p)); await db.put("blobs", blob, "img:" + key); }
+    finally { setBusy(key, null); }
+  }
+  return { key, name: f.name, ...(await imgSize(blob)), path: full };
+}
+// картинка проекта, которой нет на этом устройстве (проект с другого устройства или из чата) — скачать из MEGA
+export async function ensureImage(key, rec) {
+  if (await db.get("blobs", "img:" + key)) return imageUrl(key);
+  if (!rec || !rec.path || !cloud.signedIn()) return null;
+  const i = rec.path.lastIndexOf("/");
+  const blob = await cloud.download(rec.path.slice(0, i), rec.path.slice(i + 1));
+  await db.put("blobs", blob, "img:" + key);
+  return imageUrl(key);
+}

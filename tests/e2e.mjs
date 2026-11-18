@@ -258,6 +258,35 @@ async function run(label, viewport, scale) {
   await shot("7i-guides");
   await page.click(".guide-btn");
   ok(!(await page.locator(".guides").isVisible()), "и выключается той же кнопкой");
+  // наложения: стикер из ПАК и видео поверх основного
+  await page.click('[data-tool=overlay]'); await page.click("text=Добавить наложение здесь");
+  await page.click(".sheet .item >> text=Звезда.png");
+  await page.waitForFunction(() => window.__ed.P.overlays.length === 1 && document.querySelector(".ov.sel"));
+  const ov0 = await ed(() => window.__ed.P.overlays[0]);
+  await ed(() => window.__ed.seek(window.__ed.P.overlays[0].start + 0.5)); await page.waitForTimeout(400);
+  const alphaAt = (fx, fy) => page.evaluate(([fx, fy]) => { const c = document.querySelector("canvas.over"); return c.getContext("2d").getImageData(Math.round(c.width * fx), Math.round(c.height * fy), 1, 1).data[3]; }, [fx, fy]);
+  ok(ov0.kind === "image" && await alphaAt(ov0.x, ov0.y) > 200, "стикер из «Для монтажа ПАК» лёг поверх видео");
+  await page.locator('input[aria-label="Размер"]').fill("0.3"); await page.locator('input[aria-label="Прозрачность"]').fill("0.9");
+  ok(await ed(() => window.__ed.P.overlays[0].scale) === 0.3, "размер наложения меняется ползунком");
+  const vb2 = await page.locator(".view canvas").first().boundingBox();
+  await page.mouse.move(vb2.x + vb2.width * 0.5, vb2.y + vb2.height * 0.5); await page.mouse.down(); await page.mouse.move(vb2.x + vb2.width * 0.75, vb2.y + vb2.height * 0.3, { steps: 5 }); await page.mouse.up();
+  const ov1 = await ed(() => window.__ed.P.overlays[0]);
+  ok(ov1.x > 0.65 && ov1.y < 0.4, `наложение двигается пальцем по видео (${ov1.x.toFixed(2)}, ${ov1.y.toFixed(2)})`);
+  await page.click(".panel .tabs >> text=Анимация"); await page.click(".tiles >> text=Прыжок");
+  await page.click(".panel .tabs >> text=Маска"); await page.click(".panel .tiles >> text=Круг");
+  ok(await ed(() => window.__ed.P.overlays[0].in === "pop" && window.__ed.P.overlays[0].mask?.shape === "ellipse"), "у наложения своя анимация и маска");
+  await page.evaluate(() => { const P = window.__ed.P, k = window.__ed.P.clips[0].media; window.__ed.addOverlayVideo({ key: k, ...P.media[k] }); });
+  await page.waitForFunction(() => window.__ed.P.overlays.length === 2 && document.querySelectorAll(".tl-ovs .orow").length === 2, null, { timeout: 8000 });
+  ok(true, "видео-наложение встало на второй этаж дорожки наложений");
+  const ovv = await ed(() => window.__ed.P.overlays[1]);
+  await ed(() => window.__ed.seek(window.__ed.P.overlays[1].start + 0.6)); await page.waitForTimeout(700);
+  ok(await alphaAt(ovv.x, ovv.y) > 200, "видео-наложение видно на превью");
+  await shot("7j-overlay");
+  const gro = await page.locator(".ov.sel .g.r").boundingBox(), oe0 = ovv.end;
+  await page.mouse.move(gro.x + 5, gro.y + 10); await page.mouse.down(); await page.mouse.move(gro.x - 30, gro.y + 10, { steps: 4 }); await page.mouse.up();
+  ok(await ed(() => window.__ed.P.overlays[1].end) < oe0 - 0.1, "видео-наложение укорачивается за край");
+  await page.click(".panel >> text=Удалить наложение");
+  ok(await ed(() => window.__ed.P.overlays.length) === 1, "наложение удаляется");
   await page.click(".panel-head >> text=Готово");
 
   // воспроизведение через склейку
@@ -295,6 +324,7 @@ async function run(label, viewport, scale) {
   ok(job.subs.fonts?.[0]?.path === "Для монтажа ПАК/Шрифты/Мой шрифт.ttf", "сборщику передан путь к своему шрифту в MEGA");
   ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.clouds?.length === 1 && job.subs.clouds[0].a === 0.8, "свои настройки строк и слов и облако ушли сборщику");
   ok(job.subs.lines.some((l) => l.style?.layer === 1), "слой субтитра ушёл сборщику");
+  ok(job.overlays?.length === 1 && job.overlays[0].path === "Для монтажа ПАК/Стикеры/Звезда.png" && job.overlays[0].in === "pop" && !job.overlays[0].image, "наложение ушло сборщику (путь к картинке в MEGA)");
   ok(job.subs.masks?.length === 1 && job.subs.masks[0].shape === "ellipse" && job.subs.masks[0].start === 0, "маска клипа ушла сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");
   await page.click('.sheet [aria-label="Закрыть"]');
