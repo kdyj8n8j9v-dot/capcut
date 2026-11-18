@@ -306,3 +306,4 @@ textarea.txt { font-size: 17px; }
 @media (max-width: 480px) { .clipbar .tool { flex: 0 0 auto; padding: 0 7px; } }
 .speed-info { margin: 6px 0 8px; font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; } .speed-info b { color: var(--text); }
 .curve-box .row-btns { margin-top: 8px; }
+.hud { position: absolute; left: 8px; top: 8px; right: 8px; z-index: 5; pointer-events: none; font: 600 11px/1.35 -apple-system, sans-serif; color: #ffd60a; background: rgba(0,0,0,.6); padding: 4px 8px; border-radius: 8px; font-variant-numeric: tabular-nums; }

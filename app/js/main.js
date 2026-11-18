@@ -79,6 +79,11 @@ function openSettings() {
     body.replaceChildren(
       h("section", {}, h("h3", {}, icon("cloud", 20), "MEGA"), mega),
       h("section", {}, h("h3", {}, icon("gear", 20), "GitHub"), gh),
+      h("section", {}, h("h3", {}, icon("play", 20), "Воспроизведение"),
+        ...[["fastplay", "Новый способ (WebCodecs)", "Кадры декодирует видеочип, звук идёт отдельно. Попробуйте, если видео дёргается."],
+          ["perfhud", "Показывать замер плавности", "Цифры поверх видео: кадры в секунду, отставание, способ. По ним видно, где тормозит."]].map(([k, label, hint]) =>
+          h("button.check" + (settings.get(k) ? ".on" : ""), { onclick: () => { settings.set(k, !settings.get(k)); render(); } },
+            h("i", {}, settings.get(k) ? icon("check", 14) : null), h("span", {}, label, h("small.muted", {}, " " + hint))))),
       h("section", {}, h("h3", {}, icon("device", 20), "Приложение на экране «Домой»"),
         h("p.muted", {}, "В Safari нажмите «Поделиться» → «На экран Домой». Приложение будет открываться как обычная программа.")),
       h("p.muted.small", {}, "Пароль не сохраняется. Ключ входа MEGA и токен хранятся только на этом устройстве и никуда, кроме MEGA и GitHub, не отправляются."));

@@ -2,7 +2,7 @@
 import { h, icon, sheet, toast, ask, askText, fmtTime, clamp } from "./ui.js";
 import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
-import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage, audioUrl, ensureAudio } from "./media.js";
+import { mediaUrl, mediaBlob, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage, audioUrl, ensureAudio } from "./media.js";
 import { drawOverlays, ovAt, OV_DEFAULT, OV_IN, OV_OUT, OV_LOOP } from "./overlays.mjs";
 import { buildLines, drawSubs, drawClouds, drawMaskCached, drawTransitions, TRANSITIONS, textLines, TEXT_DEFAULT, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
 import { useFont } from "./fonts.js";
@@ -14,6 +14,7 @@ import { LOOKS, scaleLook } from "./looks.js";
 import { favStar, favSort, easePicker } from "./fav.js";
 import { CURVES, clipLen, srcAt, outAt, rateAt, splitCurve, speedAt, VMIN, VMAX } from "./speed.mjs";
 import { pushProject, remoteNewer } from "./sync.js";
+import { openFast, Stream } from "./fastplay.mjs";
 
 export const FORMATS = {
   "9:16": { w: 2160, h: 3840, label: "Вертикальное", hint: "Reels, Shorts, TikTok" },
@@ -205,8 +206,34 @@ export async function openEditor(P, onExit) {
     rec.frame = 0;
     if (v.requestVideoFrameCallback) { rec.rvfc = true; const onF = () => { rec.frame++; v.requestVideoFrameCallback(onF); }; v.requestVideoFrameCallback(onF); }
     v.src = url; rec.url = url; ed.append(v);
+    loadFast(key, rec);
     return rec;
   }
+  // быстрый путь воспроизведения: кадры — из декодера WebCodecs, звук — отдельный <audio> (см. fastplay.mjs)
+  async function loadFast(key, rec) {
+    const url = rec.url, f = await openFast(await mediaBlob(key).catch(() => null));
+    if (!f || rec.url !== url || !alive) return;
+    if (rec.stream) rec.stream.stop();
+    rec.fast = f; rec.stream = null;
+    if (f.audio) {
+      const a = rec.a || new Audio();
+      a.preload = "auto"; a.preservesPitch = true; a.src = url; rec.a = a;
+      a.volume = clamp(P.volume, 0, 1); a.muted = P.volume <= 0;
+    } else rec.a = null;
+  }
+  function startFast(rec, c, local) {
+    const src = Math.min(srcAt(c, local), c.out - 0.001);
+    // подготовленный на паузе поток с того же места — берём его (пуск без задержки на декодирование)
+    if (!(rec.stream && rec.stream.alive && !rec.stream.cur && Math.abs(rec.stream.start - src) < 0.02)) {
+      if (rec.stream) rec.stream.stop();
+      rec.stream = new Stream(rec.fast, src);
+    }
+    rec.vt = undefined; rec.rateT = 0;
+    if (rec.a) { rec.a.currentTime = src; setRate(rec.a, rateAt(c, local)); rec.a.play().catch(() => {}); }
+  }
+  // новый способ (WebCodecs) — по переключателю в «Настройках»: на проверке в Chrome прежний способ вышел ровнее
+  function fastOn(rec) { return !!rec.fast && !rec.fastOff && !window.__noFast && (!!settings.get("fastplay") || !!window.__fastplay); }
+  function stopFast(rec) { if (rec.stream) { if (rec.stream.cur) rec.hold = rec.stream.cur; rec.stream.stop(); } if (rec.a) rec.a.pause(); }
   async function loadAll() {
     await Promise.all(Object.keys(P.media).map(video));
     P.overlays.forEach(loadOv); P.sounds.forEach(loadSnd);
@@ -232,14 +259,17 @@ export async function openEditor(P, onExit) {
   async function swapLight(k) {
     const r = vids.get(k), url = await mediaUrl(k);
     if (!r || !url || r.url === url || playing) return;
-    r.url = url; r.ok = false; r.v.src = url;
+    r.url = url; r.ok = false; r.v.src = url; r.fast = null; loadFast(k, r);
   }
 
   function draw() {
     if (!R || !alive) return;
     const loc = locate(t), rec = loc && vids.get(loc.clip.media);
     const D = window.__perfD, q = () => D && performance.now(), a0 = q();
-    if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade, playing && rec.rvfc ? rec.frame : null);
+    // кадр декодера: при воспроизведении — текущий; сразу после паузы, пока видео-элемент ищет точный кадр, — последний показанный
+    const fz = !rec || !rec.ok ? null : playing ? (fastOn(rec) ? rec.stream?.cur : null) : rec.v.seeking ? rec.hold : null;
+    if (fz) R.draw(fz.canvas, rec.w, rec.h, out(), loc.clip.frame, P.grade, fz.timestamp);
+    else if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade, playing && rec.rvfc ? rec.frame : null);
     else R.draw(null);
     const a1 = q();
     const c2 = over.getContext("2d");
@@ -270,12 +300,27 @@ export async function openEditor(P, onExit) {
     tNow.textContent = fmtTime(t, true);
     syncOv(); syncSnd();
     draw();
+    if (!playing) prime();
     if ((panel === "frame" || panel === "mask" || panel === "speed") && loc?.clip.id !== shown && !ptrs.size && !sel) renderPanel();
     if (panel === "speed" && curveHook && side.querySelector("canvas.curve")) curveHook();
   }
   // скорость видео меняем, только если она заметно другая: частые смены на iPad останавливают картинку и звук
   function setRate(v, r) { r = clamp(r, 0.0625, 16); if (Math.abs(v.playbackRate - r) > r * 0.04) try { v.playbackRate = r; } catch {} }
-  function setVolume() { for (const r of vids.values()) { r.v.volume = clamp(P.volume, 0, 1); r.v.muted = P.volume <= 0; } }
+  // на паузе заранее готовим поток кадров с текущего места: по ▶ первый кадр уже декодирован
+  let primeT = 0;
+  function prime() {
+    clearTimeout(primeT);
+    primeT = setTimeout(() => {
+      if (playing) return;
+      const loc = locate(t), rec = loc && vids.get(loc.clip.media);
+      if (!rec || !fastOn(rec)) return;
+      const src = Math.min(srcAt(loc.clip, loc.local), loc.clip.out - 0.001);
+      if (rec.stream && rec.stream.alive && !rec.stream.cur && Math.abs(rec.stream.start - src) < 0.02) return;
+      if (rec.stream) rec.stream.stop();
+      rec.stream = new Stream(rec.fast, src);
+    }, 150);
+  }
+  function setVolume() { for (const r of vids.values()) for (const m of [r.v, r.a]) if (m) { m.volume = clamp(P.volume, 0, 1); m.muted = P.volume <= 0; } }
   function play() {
     if (!P.clips.length) return;
     if (t >= total() - 0.05) seek(0);
@@ -285,13 +330,21 @@ export async function openEditor(P, onExit) {
     // iPad/iPhone: каждое видео должно быть запущено касанием хотя бы раз
     for (const [k, r] of vids) if (k !== loc.clip.media && !r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.v.pause(); }).catch(() => {}); }
     const rec = vids.get(loc.clip.media);
-    if (rec) { rec.unlocked = true; rec.vt = undefined; rec.rateT = 0; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
+    // iPad: звук каждого <audio> тоже надо один раз запустить касанием
+    for (const [k, r] of vids) if (r.a && !r.aUnlocked && k !== loc.clip.media) { r.aUnlocked = true; const p = r.a.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.a.pause(); }).catch(() => {}); }
+    if (rec && fastOn(rec)) { rec.unlocked = rec.aUnlocked = true; rec.v.pause(); startFast(rec, loc.clip, loc.local); }
+    else if (rec) { rec.unlocked = true; rec.vt = undefined; rec.rateT = 0; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
     for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
     for (const a of sndEls.values()) if (a.el && !a.unlocked) { a.unlocked = true; const p = a.el.play(); p && p.then(() => syncSnd()).catch(() => {}); }
     syncOv(); syncSnd();
     syncBar(); requestAnimationFrame(tick);
   }
-  function pause() { stopAt = null; if (!playing) return; playing = false; tlSettle(); for (const r of vids.values()) r.v.pause(); syncOv(); syncSnd(); syncBar(); for (const k of vids.keys()) swapLight(k); }
+  function pause() {
+    stopAt = null; if (!playing) return; playing = false; tlSettle();
+    for (const r of vids.values()) { r.v.pause(); stopFast(r); r.fastOff = false; r.lagMs = 0; }
+    seek(t);   // видео-элемент встаёт на точный кадр паузы (пока он ищет — виден последний кадр декодера)
+    syncOv(); syncSnd(); syncBar(); for (const k of vids.keys()) swapLight(k);
+  }
   function toggle() { playing ? pause() : play(); }
   // таймлайн при воспроизведении едет как картинка на видеочипе (transform), а не прокруткой: на iPad прокрутку ведёт
   // отдельный системный процесс, и команда «прокрутить» каждый кадр давала рывки и отставание дорожки
@@ -304,6 +357,23 @@ export async function openEditor(P, onExit) {
     if (flow) { flow = null; inner.style.transform = ""; inner.style.willChange = ""; }
     scroll.scrollLeft = t * pps;
   }
+  // замер плавности поверх видео (переключатель в «Настройках»): кадров экрана/с, новых кадров видео/с, отставание
+  // картинки от таймлайна, сколько раз время стояло, способ и размер источника — владелец присылает эти цифры
+  const hud = settings.get("perfhud") ? h("div.hud") : null;
+  if (hud) view.append(hud);
+  let hs = null;
+  function hudTick(now, c, rec, fast) {
+    if (!hs || now - hs.t0 > 1000) {
+      if (hs) hud.textContent = `экран ${hs.n} к/с · видео ${hs.vf} к/с · время стояло ${hs.st} · отставание ${Math.round(hs.lag * 1000)} мс · ` +
+        `${fast ? "WebCodecs" : "плеер"} · ${rec ? rec.w + "×" + rec.h : "нет видео"} · ${String(rateAt(c, t - startOf(pi)).toFixed(2)).replace(".", ",")}×`;
+      hs = { t0: now, n: 0, vf: 0, st: 0, lag: 0, lastT: t, lastF: null };
+    }
+    hs.n++;
+    const f = fast ? rec.stream.cur?.timestamp : rec?.frame;
+    if (f !== hs.lastF) { hs.vf++; hs.lastF = f; }
+    if (t === hs.lastT) hs.st++; hs.lastT = t;
+    if (rec && rec.ok) { const have = fast ? (rec.stream.cur ? rec.stream.cur.timestamp - rec.fast.off : null) : rec.v.currentTime; if (have != null) hs.lag = Math.max(hs.lag, srcAt(c, t - startOf(pi)) - have); }
+  }
   function tick(now) {
     if (!playing || !alive) return;
     const c = P.clips[pi], rec = c && vids.get(c.media), dt = (now - lastTick) / 1000; lastTick = now;
@@ -314,8 +384,11 @@ export async function openEditor(P, onExit) {
     // между редкими обновлениями времени видео время досчитывается по часам, назад не идёт и не прыгает.
     // Не успевает устройство — таймлайн чуть притормозит, но кадры и звук идут подряд.
     const step = Math.min(dt, 0.1), prev = t - startOf(pi);
-    if (rec && rec.ok) {
-      const v = rec.v, vt = v.currentTime;
+    const fast = rec && rec.ok && fastOn(rec) && rec.stream;
+    const clk = rec && rec.ok ? (fast ? rec.a : rec.v) : null;   // по чему идёт время: звук быстрого пути или видео
+    if (fast && !rec.stream.cur && !rec.stream.ready(srcAt(c, prev))) local = prev;   // декодер ещё не дал первый кадр — ждём
+    else if (clk) {
+      const v = clk, vt = v.currentTime;
       if (now - (rec.rateT || 0) > 120) { rec.rateT = now; setRate(v, rateAt(c, prev)); }   // скорость меняем не чаще ~8 раз в секунду
       if (vt !== rec.vt) { rec.vt = vt; rec.vWall = now; rec.vLocal = outAt(c, vt); }
       const moving = !v.paused && !v.seeking && v.readyState >= 3;
@@ -324,13 +397,24 @@ export async function openEditor(P, onExit) {
       local = prev + clamp(est - prev, 0, step * 2);
       if (v.paused && !v.ended && !v.seeking && now - (rec.playT || 0) > 300) { rec.playT = now; v.play().catch(() => {}); }
     } else local = prev + step;   // нет копии — чёрный кадр, время идёт по часам
-    if (local >= len(c) - 0.015 || (rec && (rec.v.ended || rec.v.currentTime >= c.out - 0.02))) {
-      if (rec) rec.v.pause();
+    // страховка: если декодер не успевает за звуком (кадр отстаёт больше 0,3 с исходника дольше 1,2 с) — до конца
+    // этого воспроизведения переходим на прежний путь (плеер браузера), чтобы картинка не отставала
+    if (fast && rec.stream.cur) {
+      const lag = srcAt(c, local) - (rec.stream.cur.timestamp - rec.fast.off);
+      rec.lagMs = lag > 0.3 ? (rec.lagMs || 0) + dt * 1000 : Math.max(0, (rec.lagMs || 0) - dt * 500);
+      if (rec.lagMs > 1200) {
+        rec.fastOff = true; rec.lagMs = 0; stopFast(rec); rec.hold = null;
+        rec.v.currentTime = Math.min(srcAt(c, local), c.out - 0.001); setRate(rec.v, rateAt(c, local)); rec.vt = undefined; rec.v.play().catch(() => {});
+      }
+    }
+    if (local >= len(c) - 0.015 || (clk && (clk.ended || clk.currentTime >= c.out - 0.02))) {
+      if (rec) { rec.v.pause(); stopFast(rec); }
       pi++;
       if (pi >= P.clips.length) { playing = false; t = total(); tlSettle(); syncBar(); draw(); return; }
       const n = P.clips[pi], nr = vids.get(n.media);
       t = startOf(pi);
-      if (nr && nr.ok) { nr.vt = undefined; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
+      if (nr && nr.ok && fastOn(nr)) startFast(nr, n, 0);
+      else if (nr && nr.ok) { nr.vt = undefined; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
     } else t = startOf(pi) + Math.max(0, local);
     const pf = window.__perf, p0 = pf && performance.now();
     tlMove();
@@ -340,6 +424,7 @@ export async function openEditor(P, onExit) {
     const p2 = pf && performance.now();
     draw();
     if (pf) { const p3 = performance.now(); pf.push([p1 - p0, p2 - p1, p3 - p2, p0 - now]); }   // замер: прокрутка, синхронизация, рисование
+    if (hud) hudTick(now, c, rec, fast);
     if (stopAt != null && t >= stopAt) return pause();
     requestAnimationFrame(tick);
   }
@@ -1531,5 +1616,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, srcAt, rateAt, pause, quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
+  window.__ed = { P, seek, srcAt, rateAt, pause, recOf: (k) => vids.get(k), quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
 }

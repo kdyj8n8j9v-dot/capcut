@@ -16,6 +16,9 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(e.message)); page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 await page.route("**/tests/sample.webm", (r) => r.fulfill({ body: fs.readFileSync(file), contentType: "video/mp4" }));
 if (process.env.OLD) await page.route("**/app/js/editor.js", (r) => r.fulfill({ body: fs.readFileSync(process.env.OLD), contentType: "text/javascript" }));   // сравнение с прежней версией
+if (process.env.NOFAST) await page.addInitScript(() => { window.__noFast = true; });
+if (process.env.FAST) await page.addInitScript(() => { window.__fastplay = true; });
+await page.addInitScript(() => localStorage.setItem("studio.perfhud", "true"));   // замер на экране — виден на снимках
 await page.addInitScript(fake);
 await page.goto("http://127.0.0.1:8765/app/");
 await page.click(".setup");
@@ -28,6 +31,7 @@ await page.click(".lib .item >> text=Съёмка 1.mov"); await page.waitForSel
 await page.waitForFunction(() => window.__ed && window.__ed.total() > 15, null, { timeout: 30000 });
 if (await page.locator(".panel-head >> text=Готово").count()) await page.click(".panel-head >> text=Готово");
 await page.waitForTimeout(1500);
+if (process.env.FAST) await page.waitForFunction(() => { const r = window.__ed.recOf(window.__ed.P.clips[0].media); return r && r.fast; }, null, { timeout: 8000 }).catch(() => console.log("быстрый путь не включился"));
 
 if (SLOW > 1) await (await page.context().newCDPSession(page)).send("Emulation.setCPUThrottlingRate", { rate: SLOW });
 // сбор: каждый кадр экрана — время таймлайна и «отпечаток» картинки превью
@@ -39,7 +43,10 @@ await page.evaluate((FPS) => {
   let frames = 0; const vv = v0(); const f = () => { frames++; vv.requestVideoFrameCallback(f); }; vv.requestVideoFrameCallback(f);
   // звук: анализатор на видео; в тестовом видео ровный тон — любая дыра в звуке видна
   const ac = new AudioContext(), an = ac.createAnalyser(); an.fftSize = 512;
-  const srcN = ac.createMediaElementSource(vv); srcN.connect(an); an.connect(ac.destination);
+  const rec0 = window.__ed.recOf(window.__ed.P.clips[0].media);
+  const useFast = rec0.fast && !window.__noFast && !!window.__fastplay;
+  window.__mode = useFast ? "быстрый (WebCodecs)" : "плеер браузера";
+  const srcN = ac.createMediaElementSource(useFast ? rec0.a : vv); srcN.connect(an); an.connect(ac.destination);
   const ab = new Float32Array(512); window.__rms = () => { an.getFloatTimeDomainData(ab); let q = 0; for (const x of ab) q += x * x; return Math.sqrt(q / ab.length); };
   window.__ac = ac;
   let seeks = 0, waits = 0; vv.addEventListener("seeking", () => seeks++); vv.addEventListener("waiting", () => waits++);
@@ -81,7 +88,7 @@ const measure = async (name, ms = 3000) => {
     for (let i = 8; i < L.length; i++) { if (L[i][9] < 0.02) { if (!qStart) qStart = L[i][0]; } else { loud++; if (qStart && L[i][0] - qStart > 60) { holes++; quiet += L[i][0] - qStart; } qStart = 0; } }
     const ds = L.slice(5).map((x) => x[6]), avg = ds.reduce((a, x) => a + x, 0) / ds.length, mx = Math.max(...ds.map(Math.abs));
     return { сек: +dur.toFixed(1), таймлайн: +(L.at(-1)[1] - L[0][1]).toFixed(2), стоп_таймлайна: stallT, макс_стоп_мс: Math.round(maxT),
-      застывала_картинка: frozen, макс_застывание_мс: Math.round(maxF), кадров_в_сек: Math.round((L.at(-1)[3] - L[0][3]) / dur), перескоков: L.at(-1)[4] - L[0][4], скачков_кадра: jumps, дыр_в_звуке: holes, тишина_мс: Math.round(quiet), звук_есть: loud > 10, ожиданий_видео: L.at(-1)[8] - L[0][8], экран_к_с: Math.round(L.length / dur),
+      застывала_картинка: frozen, макс_застывание_мс: Math.round(maxF), кадров_в_сек: Math.round(L.filter((x, i) => i && x[2] !== L[i - 1][2]).length / dur), перескоков: L.at(-1)[4] - L[0][4], скачков_кадра: jumps, дыр_в_звуке: holes, тишина_мс: Math.round(quiet), звук_есть: loud > 10, ожиданий_видео: L.at(-1)[8] - L[0][8], экран_к_с: Math.round(L.length / dur),
       расхождение_кадров_ср: +avg.toFixed(1), расхождение_макс: Math.round(mx),
       плохие: L.slice(5).filter((x) => Math.abs(x[6]) > 12).map((x) => [+x[1].toFixed(2), Math.round(x[6])]).slice(0, 8), длина: +window.__ed.total().toFixed(2) };
   });
@@ -117,5 +124,6 @@ await page.tap(".curve-box >> text=Точка"); await seek0(); await measure("�
 await page.tap(".panel-head >> text=Готово"); await seek0(); await measure("панель закрыта, кривая");
 await page.tap("nav.clipbar [data-tool=back]"); await seek0(); await measure("клип не выбран, кривая", 6000);
 console.log("кривая:", JSON.stringify(await page.evaluate(() => window.__ed.P.clips[0].curve)), "скорость на 6,7 с:", await page.evaluate(() => { const E = window.__ed, c = E.P.clips[0]; return E.rateAt ? E.rateAt(c, 6.7) : "?"; }));
+console.log("путь:", await page.evaluate(() => window.__mode));
 console.log(errors.length ? "ОШИБКИ: " + errors.join(" | ") : "ошибок в консоли нет");
 await browser.close();

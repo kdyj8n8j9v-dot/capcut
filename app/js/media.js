@@ -33,6 +33,8 @@ export async function library(refresh) {
 }
 
 // Адрес для превью: файл этого сеанса или сохранённая копия. null — на устройстве копии нет.
+// сам файл копии (для быстрого воспроизведения через WebCodecs)
+export async function mediaBlob(key) { return files.get(key) || await db.get("blobs", key); }
 export async function mediaUrl(key) {
   if (urls.has(key)) return urls.get(key);
   const b = files.get(key) || await db.get("blobs", key);
