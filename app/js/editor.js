@@ -386,7 +386,7 @@ export async function openEditor(P, onExit) {
     const f = fast ? rec.stream.cur?.timestamp : rec?.frame;
     if (f !== hs.lastF) { hs.vf++; hs.lastF = f; }
     if (t === hs.lastT) hs.st++; hs.lastT = t;
-    if (rec && rec.ok) { const have = fast ? (rec.stream.cur ? rec.stream.cur.timestamp - rec.fast.off : null) : rec.v.currentTime; if (have != null) hs.lag = Math.max(hs.lag, srcAt(c, t - startOf(pi)) - have); }
+    if (rec && rec.ok) { const have = fast ? (rec.stream.cur ? rec.stream.cur.timestamp - rec.fast.off : null) : (rec.mt != null ? rec.mt : rec.v.currentTime);   // отметка показанного кадра точнее currentTime if (have != null) hs.lag = Math.max(hs.lag, srcAt(c, t - startOf(pi)) - have); }
   }
   function tick(now) {
     if (!playing || !alive) return;
