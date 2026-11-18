@@ -35,7 +35,7 @@ export async function openEditor(P, onExit) {
   const vids = new Map();     // key → { v, w, h, ok }
   const thumbs = new Map();   // key → [{ t, c }]
   const out = () => FORMATS[P.format] || FORMATS["9:16"];
-  const len = (c) => c.out - c.in;
+  const sp = (c) => c.speed || 1, len = (c) => (c.out - c.in) / sp(c);   // длина на таймлайне с учётом скорости
   const total = () => P.clips.reduce((a, c) => a + len(c), 0);
   const startOf = (i) => P.clips.slice(0, i).reduce((a, c) => a + len(c), 0);
   function locate(time) {
@@ -112,7 +112,7 @@ export async function openEditor(P, onExit) {
   const tool = (id, ic, label, fn) => h("button.tool", { "data-tool": id, onclick: fn }, icon(ic), h("span", {}, label));
   const tools = h("nav.tools", {},
     tool("media", "plus", "Медиа", addMedia), tool("overlay", "layers", "Наложение", () => openPanel("overlay")), tool("split", "split", "Разрезать", split),
-    tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("mask", "mask", "Маска", () => openPanel("mask")), tool("color", "color", "Цвет", () => openPanel("color")),
+    tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("speed", "speed", "Скорость", () => openPanel("speed")), tool("mask", "mask", "Маска", () => openPanel("mask")), tool("color", "color", "Цвет", () => openPanel("color")),
     tool("text", "type", "Текст", () => openPanel("text")), tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
   const ed = h("div.ed", {},
     h("header.bar", {},
@@ -230,7 +230,8 @@ export async function openEditor(P, onExit) {
     if (loc) {
       const rec = vids.get(loc.clip.media);
       if (rec && rec.ok) {
-        const want = Math.min(loc.clip.in + loc.local, loc.clip.out - 0.001);
+        const want = Math.min(loc.clip.in + loc.local * sp(loc.clip), loc.clip.out - 0.001);
+        rec.v.playbackRate = sp(loc.clip);
         if (Math.abs(rec.v.currentTime - want) > 0.005) rec.v.currentTime = want;
       }
     }
@@ -238,7 +239,7 @@ export async function openEditor(P, onExit) {
     tNow.textContent = fmtTime(t, true);
     syncOv(); syncSnd();
     draw();
-    if ((panel === "frame" || panel === "mask") && loc?.clip.id !== shown && !ptrs.size) renderPanel();
+    if ((panel === "frame" || panel === "mask" || panel === "speed") && loc?.clip.id !== shown && !ptrs.size) renderPanel();
   }
   function setVolume() { for (const r of vids.values()) { r.v.volume = clamp(P.volume, 0, 1); r.v.muted = P.volume <= 0; } }
   function play() {
@@ -250,7 +251,7 @@ export async function openEditor(P, onExit) {
     // iPad/iPhone: каждое видео должно быть запущено касанием хотя бы раз
     for (const [k, r] of vids) if (k !== loc.clip.media && !r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.v.pause(); }).catch(() => {}); }
     const rec = vids.get(loc.clip.media);
-    if (rec) { rec.unlocked = true; rec.v.play().catch(() => {}); }
+    if (rec) { rec.unlocked = true; rec.v.playbackRate = sp(loc.clip); rec.v.play().catch(() => {}); }
     for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
     for (const a of sndEls.values()) if (a.el && !a.unlocked) { a.unlocked = true; const p = a.el.play(); p && p.then(() => syncSnd()).catch(() => {}); }
     syncOv(); syncSnd();
@@ -263,14 +264,14 @@ export async function openEditor(P, onExit) {
     const c = P.clips[pi], rec = c && vids.get(c.media), dt = (now - lastTick) / 1000; lastTick = now;
     if (!c) return pause();
     let local;
-    if (rec && rec.ok) local = rec.v.currentTime - c.in; else local = t - startOf(pi) + dt;   // нет копии — чёрный кадр, время идёт
+    if (rec && rec.ok) local = (rec.v.currentTime - c.in) / sp(c); else local = t - startOf(pi) + dt;   // нет копии — чёрный кадр, время идёт
     if (local >= len(c) - 0.015 || (rec && rec.v.ended)) {
       if (rec) rec.v.pause();
       pi++;
       if (pi >= P.clips.length) { playing = false; t = total(); scroll.scrollLeft = t * pps; syncBar(); draw(); return; }
       const n = P.clips[pi], nr = vids.get(n.media);
       t = startOf(pi);
-      if (nr && nr.ok) { nr.v.currentTime = n.in; nr.v.play().catch(() => {}); }
+      if (nr && nr.ok) { nr.v.currentTime = n.in; nr.v.playbackRate = sp(n); nr.v.play().catch(() => {}); }
     } else t = startOf(pi) + Math.max(0, local);
     scroll.scrollLeft = t * pps;
     tNow.textContent = fmtTime(t, true);
@@ -753,7 +754,7 @@ export async function openEditor(P, onExit) {
     if (!list.length) return;
     const g = cv.getContext("2d"), tw = Math.round(hh * list[0].c.width / list[0].c.height), k = w / (len(clip) * pps);
     for (let x = 0; x < w; x += tw) {
-      const time = clip.in + (x + tw / 2) / k / pps;
+      const time = clip.in + (x + tw / 2) / k / pps * sp(clip);
       let best = list[0];
       for (const th of list) if (Math.abs(th.t - time) < Math.abs(best.t - time)) best = th;
       g.drawImage(best.c, x, 0, tw, hh);
@@ -847,8 +848,8 @@ export async function openEditor(P, onExit) {
     const dx = e.clientX - drag.x;
     if (drag.kind === "trim") {
       const c = drag.clip, m = P.media[c.media] || { dur: c.out };
-      if (drag.side === "l") c.in = clamp(drag.in0 + dx / pps, 0, c.out - MIN_LEN);
-      else c.out = clamp(drag.out0 + dx / pps, c.in + MIN_LEN, m.dur);
+      if (drag.side === "l") c.in = clamp(drag.in0 + dx / pps * sp(c), 0, c.out - MIN_LEN);
+      else c.out = clamp(drag.out0 + dx / pps * sp(c), c.in + MIN_LEN, m.dur);
       drag.el.style.width = len(c) * pps + "px";
       drag.el.querySelector(".clip-len").textContent = fmtTime(len(c), true);
       // показать кадр на краю, который двигаем
@@ -891,7 +892,7 @@ export async function openEditor(P, onExit) {
     const loc = locate(t);
     if (!loc || loc.local < MIN_LEN || len(loc.clip) - loc.local < MIN_LEN) return toast("Поставьте линию туда, где нужно разрезать");
     begin(); pause();
-    const c = loc.clip, cut = c.in + loc.local;
+    const c = loc.clip, cut = c.in + loc.local * sp(c);
     const b = { ...c, id: uid(), in: cut, frame: c.frame && { ...c.frame }, ...(c.mask ? { mask: { ...c.mask } } : {}) };
     c.out = cut;
     P.clips.splice(loc.i + 1, 0, b);
@@ -997,6 +998,17 @@ export async function openEditor(P, onExit) {
       }
       subApi.slider = slider; subApi.head = head;
       side.replaceChildren(...subsPanel(subApi).flat(9).filter(Boolean));
+    } else if (panel === "speed") {
+      const c = target(); shown = c?.id;
+      if (!c) return side.replaceChildren(head("Скорость"), h("p.muted", {}, "Добавьте видео."));
+      const set = (v) => { begin(); const at = startOf(P.clips.indexOf(c)); if (v === 1) delete c.speed; else c.speed = v; layout(); seek(at + 0.01); renderPanel(); save(); };
+      const cur = sp(c), srcLen = c.out - c.in;
+      side.replaceChildren(head("Скорость", cur !== 1 && (() => set(1))),
+        h("p.hint", {}, "Для клипа, который сейчас на экране. Звук ускоряется и замедляется без изменения тона."),
+        h("div.tiles", {}, [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((v) => h("button" + (Math.abs(cur - v) < 1e-6 ? ".on" : ""), { onclick: () => set(v) }, String(v).replace(".", ",") + "×"))),
+        slider("Точно", () => cur, (v) => { c.speed = Math.round(v * 100) / 100; }, { min: 0.25, max: 4, step: 0.05, def: 1, show: (v) => v.toFixed(2).replace(".", ",") + "×" }),
+        h("p.hint", {}, `Кусок исходника ${fmtTime(srcLen, true)} → на экране ${fmtTime(len(c), true)}.`));
+      side.querySelector("input[type=range]").addEventListener("change", () => { layout(); seek(t); renderPanel(); save(); });
     } else if (panel === "mask") {
       const c = target(); shown = c?.id;
       if (!c) return side.replaceChildren(head("Маска"), h("p.muted", {}, "Добавьте видео."));

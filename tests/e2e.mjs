@@ -125,6 +125,15 @@ async function run(label, viewport, scale) {
   ok(mk[3] > 240 && mk[7] < 20 && await ed(() => window.__ed.P.clips[0].mask?.shape) === "ellipse", "маска «Круг»: угол кадра закрыт, центр виден");
   await shot("9a-mask");
   await page.click(".panel-head >> text=Готово");
+  // скорость клипа
+  const T0 = await ed(() => window.__ed.total()), L0 = await ed(() => { const c = window.__ed.P.clips[0]; return c.out - c.in; });
+  await ed(() => window.__ed.seek(0.2));
+  await page.click('[data-tool=speed]'); await page.click(".panel .tiles >> text=2×");
+  ok(Math.abs(await ed(() => window.__ed.total()) - (T0 - L0 / 2)) < 0.02 && await ed(() => window.__ed.P.clips[0].speed) === 2, "скорость 2×: клип стал вдвое короче на таймлайне");
+  await shot("9b-speed");
+  await page.click(".panel .tiles >> text=1×");
+  ok(Math.abs(await ed(() => window.__ed.total()) - T0) < 0.02 && !(await ed(() => window.__ed.P.clips[0].speed)), "скорость возвращается к 1×");
+  await page.click(".panel-head >> text=Готово");
 
   // субтитры
   await page.click('[data-tool=subs]');

@@ -10,18 +10,18 @@ import { packFont } from "./fonts.js";
 const safe = (n) => (n || "Ролик").replace(/[\/\\:*?"<>|]/g, "-").trim() || "Ролик";
 const r3 = (x) => Math.round(x * 1000) / 1000;
 export function buildJob(P, out, req) {
-  const ovs = (P.overlays || []).filter((o) => o.start < P.clips.reduce((x, c) => x + c.out - c.in, 0));
+  const ovs = (P.overlays || []).filter((o) => o.start < P.clips.reduce((x, c) => x + (c.out - c.in) / (c.speed || 1), 0));
   const used = [...new Set([...P.clips.map((c) => c.media), ...ovs.filter((o) => o.kind === "video").map((o) => o.media)])];
   const style = normStyle(P.subs?.style), lines = [...(P.subs?.on ? buildLines(P.clips, P.words || {}, style) : []), ...textLines(P.texts)];   // субтитры + титры
-  const dur = P.clips.reduce((x, c) => x + c.out - c.in, 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
-  const masks = []; { let at = 0; for (const c of P.clips) { const len = c.out - c.in; if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
+  const dur = P.clips.reduce((x, c) => x + (c.out - c.in) / (c.speed || 1), 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
+  const masks = []; { let at = 0; for (const c of P.clips) { const len = (c.out - c.in) / (c.speed || 1); if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
   // свои шрифты (общий, отдельных строк и слов): сборщик возьмёт те же файлы из MEGA
   const names = new Set([style.font, ...lines.flatMap((l) => [l.style?.font, ...l.words.map((w) => w.style?.font)])].filter((n) => n && !FONTS[n]));
   const pf = [...names].map(packFont).filter(Boolean).map((f) => ({ name: f.name, path: f.path + "/" + f.file }));
   return {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
-    timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.frame ? { frame: c.frame } : {}) })),
+    timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1, ...(P.voice || {}) },
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
@@ -35,7 +35,7 @@ export function openExport(P, out) {
   let alive = true;
   const box = h("div.export");
   const s = sheet("Экспорт", box, { onclose: () => { alive = false; } });
-  const dur = P.clips.reduce((a, c) => a + c.out - c.in, 0);
+  const dur = P.clips.reduce((a, c) => a + (c.out - c.in) / (c.speed || 1), 0);
   const saveP = () => db.put("projects", P).catch(() => {});
 
   function intro(err) {

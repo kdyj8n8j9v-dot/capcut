@@ -62,7 +62,8 @@ python3 scripts/project.py push project.json    # положить готовы�
 ```
 id, name, created, updated, by ("app" | "claude"), format, volume, duration
 media:  { <ключ>: { name, dur, w, h } }            ключ = первые 16 знаков sha256 имени файла (NFC)
-clips:  [ { id, media: <ключ>, in, out, frame?, mask? } ]
+clips:  [ { id, media: <ключ>, in, out, speed? (0,25–4), frame?, mask? } ]
+voice:  { rumble, denoise, deess, mud, body, pres, air, comp, leveler, dehum, lufs }   обработка голоса (render.py audio_chain)
 grade:  { … }
 words:  { <ключ>: [ { text, start, end, em?, br?, nb?, ls?, ws? } ] }   слова во времени исходника
         em — ключевое слово; br — после слова новая строка; nb — не рвать; ls — свои настройки строки

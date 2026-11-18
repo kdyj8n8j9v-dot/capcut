@@ -47,12 +47,14 @@ def clip_path(clip):
     return p if p.is_absolute() else ORIG / p
 
 
-def decode(path, t0, dur, w, h, fps=None):
-    """Yield float32 HxWx3 frames (0..1) of [t0, t0+dur) — rgb48 decode, BT.709 limited → full.
-    fps: the output rate, given only for a take shot at another rate (frames are dropped/repeated to match)."""
+def decode(path, t0, dur, w, h, fps=None, speed=1.0, count=None):
+    """Yield float32 HxWx3 frames (0..1) of [t0, t0+dur) of the source — rgb48 decode, BT.709 limited → full.
+    fps: the output rate, given only for a take shot at another rate (frames are dropped/repeated to match).
+    speed ≠ 1 (the app's clip speed): source time is squeezed/stretched, then sampled at fps (needs fps)."""
     vf = "scale=in_color_matrix=bt709:in_range=tv:out_range=pc:flags=accurate_rnd+full_chroma_int,format=rgb48le"
+    pre = f"setpts=(PTS-STARTPTS)/{speed:.6f},fps={fps}," if speed != 1 else (f"fps={fps}," if fps else "")
     cmd = ["ffmpeg", "-v", "error", "-ss", f"{t0:.6f}", "-i", str(path), "-t", f"{dur:.6f}", "-an",
-           "-vf", (f"fps={fps}," if fps else "") + vf, "-f", "rawvideo", "-"]
+           "-vf", pre + vf, *(["-frames:v", str(count)] if count else []), "-f", "rawvideo", "-"]
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     n = w * h * 3 * 2
     while True:
@@ -69,8 +71,28 @@ def has_audio(path):
     return bool(out)
 
 
+def spd(s):
+    return float(s.get("speed") or 1)
+
+
+def seg_len(s):
+    """Length of a segment on the timeline (the source part played at its speed)."""
+    return (s["out"] - s["in"]) / spd(s)
+
+
+def atempo(speed):
+    """atempo takes 0.5…2 per filter: chain them for 0.25…4."""
+    out, k = [], speed
+    while k > 2:
+        out.append("atempo=2"); k /= 2
+    while k < 0.5:
+        out.append("atempo=0.5"); k /= 0.5
+    out.append(f"atempo={k:.6f}")
+    return ",".join(out)
+
+
 def total_len(segs):
-    return sum(s["out"] - s["in"] for s in segs)
+    return sum(seg_len(s) for s in segs)
 
 
 def noise_floor(wav):
@@ -157,9 +179,10 @@ def build_audio(project, out_wav):
     for i, s in enumerate(segs):
         path = clip_path(clips[s["clip"]])
         inputs += ["-i", str(path)]
-        d = s["out"] - s["in"]
+        d = seg_len(s)
         if has_audio(path):
             parts.append(f"[{i}:a]atrim={s['in']:.6f}:{s['out']:.6f},asetpts=PTS-STARTPTS,{fmt},"
+                         + (atempo(spd(s)) + "," if spd(s) != 1 else "") +
                          f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE},volume={vol:.4f}[a{i}]")
         else:  # take without sound (screen recording, drone): silence of the same length
             parts.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{d:.6f},{fmt}[a{i}]")
@@ -248,7 +271,7 @@ def render(project, out, draft=False):
     wav, cube = work / "audio.wav", work / "grade.cube"
     build_audio(project, wav)
     G.write_cube(G.settings(project.get("grade")), cube)
-    total = sum(round((s["out"] - s["in"]) * fps) for s in segs)
+    total = sum(round(seg_len(s) * fps) for s in segs)
     vf = f"lut3d=file='{cube}':interp=tetrahedral,scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
     sub_in, vmap = [], ["-map", "0:v", "-vf", vf]
     layer = dict(project.get("subs") or {})
@@ -288,9 +311,11 @@ def render(project, out, draft=False):
     with ThreadPoolExecutor(3) as pool:
         for seg in segs:
             info = infos[seg["clip"]]
-            n = round((seg["out"] - seg["in"]) * fps)
-            src = decode(clip_path(clips[seg["clip"]]), seg["in"], n / fps, info["w"], info["h"],
-                         fps if info["fps"] != fps else None)
+            n = round(seg_len(seg) * fps)
+            src = decode(clip_path(clips[seg["clip"]]), seg["in"], n / fps * spd(seg), info["w"], info["h"],
+                         fps if (info["fps"] != fps or spd(seg) != 1) else None, spd(seg), n if spd(seg) != 1 else None)
+            if spd(seg) != 1:
+                src = exactly(src, n)
             if draft:
                 src = (f[::2, ::2] for f in src)
             pending = []
@@ -307,6 +332,21 @@ def render(project, out, draft=False):
     if p.wait() != 0:
         raise SystemExit("encoder failed")
     return verify(out, out_w, out_h, float(total / fps))
+
+
+def exactly(src, n):
+    """n frames: a sped-up/slowed part can come one or two frames short at its end — the last one is held."""
+    last = None
+    for i, f in enumerate(src):
+        if i >= n:
+            break
+        last = f
+        yield f
+    else:
+        i = (i + 1) if last is not None else 0
+        while last is not None and i < n:
+            yield last
+            i += 1
 
 
 def write(p, img):
@@ -333,14 +373,14 @@ def still(project, t, png):
     """One graded frame at timeline time t (seconds) → 16-bit PNG, for comparison with the app."""
     acc = 0.0
     for seg in project["timeline"]:
-        d = seg["out"] - seg["in"]
+        d = seg_len(seg)
         if t < acc + d:
             break
         acc += d
     clip = project["clips"][seg["clip"]]
     info = probe(clip_path(clip))
     out_w, out_h = output_size(project, info)
-    frame = next(decode(clip_path(clip), seg["in"] + (t - acc), 1 / float(info["fps"]), info["w"], info["h"]))
+    frame = next(decode(clip_path(clip), seg["in"] + (t - acc) * spd(seg), 1 / float(info["fps"]), info["w"], info["h"]))
     img = process(frame, project, seg, out_w, out_h, G.uv_grid(out_w, out_h))
     cube = Path(png).with_suffix(".cube")
     G.write_cube(G.settings(project.get("grade")), cube)

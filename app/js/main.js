@@ -32,7 +32,7 @@ async function home(pull = true) {
       projects.map((p) => h("div.card", { onclick: () => open(p), role: "button", tabIndex: 0 },
         h("div.thumb", { style: p.thumb ? { backgroundImage: `url(${p.thumb})` } : {} }, !p.thumb && icon("film", 30),
           h("button.round.del", { onclick: (e) => del(p, e), "aria-label": "Удалить проект" }, icon("trash", 16))),
-        h("b", {}, p.name), h("small", {}, p.fresh ? h("span.newtag", {}, p.by === "claude" ? "новое из чата «Монтаж»" : "обновлён с другого устройства") : `${fmtTime(p.duration || p.clips?.reduce((a, c) => a + c.out - c.in, 0) || 0)} · ${day(p.updated)}`))))));
+        h("b", {}, p.name), h("small", {}, p.fresh ? h("span.newtag", {}, p.by === "claude" ? "новое из чата «Монтаж»" : "обновлён с другого устройства") : `${fmtTime(p.duration || p.clips?.reduce((a, c) => a + (c.out - c.in) / (c.speed || 1), 0) || 0)} · ${day(p.updated)}`))))));
   // проекты из облака: от чата «Монтаж» и с других устройств
   if (pull && !pulling && cloud.signedIn()) { pulling = true; pullProjects().then((n) => { pulling = false; if (n && document.querySelector(".home")) home(false); }).catch(() => { pulling = false; }); }
 }
