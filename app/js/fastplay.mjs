@@ -43,7 +43,7 @@ export class Stream {
         if (!this.alive) { r.value.close(); break; }
         this.q.push(r.value);
       }
-    } catch { this.done = true; }
+    } catch (e) { this.done = true; this.err = "декодер: " + (e?.message || e); }
     this.busy = false;
   }
   frameAt(src) {
@@ -51,7 +51,11 @@ export class Stream {
     let pick = null;
     while (this.q.length && this.q[0].timestamp <= s) { if (pick) pick.close(); pick = this.q.shift(); }
     if (pick) {   // перерисовать только показываемый кадр (уменьшенным до размера превью)
-      try { pick.drawWithFit(this.g, { fit: "fill" }); this.cur = { canvas: this.cv, timestamp: pick.timestamp }; } catch {}
+      try { pick.drawWithFit(this.g, { fit: "fill" }); this.cur = { canvas: this.cv, timestamp: pick.timestamp }; }
+      catch (e) {   // запасной способ нарисовать кадр (если этот браузер не умеет первый)
+        try { const vf = pick.toVideoFrame(); this.g.drawImage(vf, 0, 0, this.cv.width, this.cv.height); vf.close(); this.cur = { canvas: this.cv, timestamp: pick.timestamp }; }
+        catch (e2) { this.err = "рисование: " + (e?.message || e); }
+      }
       pick.close();
     }
     this.pump();

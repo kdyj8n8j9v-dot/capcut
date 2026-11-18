@@ -166,7 +166,8 @@ export async function openEditor(P, onExit) {
     canvas.style.width = cw + "px"; canvas.style.height = ch + "px";
     const dpr = Math.min(2, devicePixelRatio || 1), q = Math.min(1, 1080 / (Math.min(cw, ch) * dpr));
     canvas.width = Math.max(2, Math.round(cw * dpr * q)); canvas.height = Math.max(2, Math.round(ch * dpr * q));
-    over.style.width = cw + "px"; over.style.height = ch + "px"; over.width = canvas.width; over.height = canvas.height;
+    over.style.width = cw + "px"; over.style.height = ch + "px";
+    sizeVids(cw, ch); over.width = canvas.width; over.height = canvas.height;
     // рамка Instagram: где интерфейс закрывает картинку (в готовое видео не попадает)
     const gOn = !!settings.get("guides") && P.clips.length > 0;
     guides.hidden = !gOn; guideBtn.classList.toggle("on", gOn);
@@ -191,6 +192,8 @@ export async function openEditor(P, onExit) {
   const ro = new ResizeObserver(fit); ro.observe(view); ro.observe(scroll);
 
   // ——— видео
+  let vw = 2, vh = 2;
+  function sizeVids(w = vw, h = vh) { vw = w; vh = h; for (const v of view.querySelectorAll("video.src")) { v.style.width = w + "px"; v.style.height = h + "px"; } }
   async function video(key) {
     if (vids.has(key)) return vids.get(key);
     const url = await mediaUrl(key);
@@ -205,7 +208,9 @@ export async function openEditor(P, onExit) {
     // счётчик новых кадров: пока видео играет, превью перерисовывает картинку только с новым кадром
     rec.frame = 0;
     if (v.requestVideoFrameCallback) { rec.rvfc = true; const onF = () => { rec.frame++; v.requestVideoFrameCallback(onF); }; v.requestVideoFrameCallback(onF); }
-    v.src = url; rec.url = url; ed.append(v);
+    // видео — настоящего размера прямо под картинкой превью (её закрывает холст). Раньше оно было 2×2 точки и прозрачным:
+    // Safari такое видео считает невидимым и отдаёт меньше кадров (замер на iPad: 20 к/с вместо 30)
+    v.src = url; rec.url = url; view.prepend(v); sizeVids();
     loadFast(key, rec);
     return rec;
   }
@@ -365,8 +370,9 @@ export async function openEditor(P, onExit) {
   function hudTick(now, c, rec, fast) {
     if (!hs || now - hs.t0 > 1000) {
       if (hs) hud.textContent = `экран ${hs.n} к/с · видео ${hs.vf} к/с · время стояло ${hs.st} · отставание ${Math.round(hs.lag * 1000)} мс · ` +
-        `${fast ? "WebCodecs" : "плеер"} · ${rec ? rec.w + "×" + rec.h : "нет видео"} · ${String(rateAt(c, t - startOf(pi)).toFixed(2)).replace(".", ",")}×`;
-      hs = { t0: now, n: 0, vf: 0, st: 0, lag: 0, lastT: t, lastF: null };
+        `рисование ${(hs.dr / Math.max(1, hs.n)).toFixed(1).replace(".", ",")} мс · ${fast ? "WebCodecs" : "плеер"}${rec?.stream?.err ? " (WebCodecs, " + rec.stream.err + ")" : ""} · ` +
+        `${rec ? rec.w + "×" + rec.h : "нет видео"} · ${String(rateAt(c, t - startOf(pi)).toFixed(2)).replace(".", ",")}×`;
+      hs = { t0: now, n: 0, vf: 0, st: 0, lag: 0, dr: 0, lastT: t, lastF: null };
     }
     hs.n++;
     const f = fast ? rec.stream.cur?.timestamp : rec?.frame;
@@ -392,7 +398,7 @@ export async function openEditor(P, onExit) {
       if (now - (rec.rateT || 0) > 120) { rec.rateT = now; setRate(v, rateAt(c, prev)); }   // скорость меняем не чаще ~8 раз в секунду
       if (vt !== rec.vt) { rec.vt = vt; rec.vWall = now; rec.vLocal = outAt(c, vt); }
       const moving = !v.paused && !v.seeking && v.readyState >= 3;
-      const est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.05) : 0);   // досчёт — не дальше 0,05 с
+      const est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.12) : 0);   // досчёт между кадрами видео — до 0,12 с (на iPad время видео меняется рывками)
       // плавно: не назад, не быстрее чем вдвое за кадр экрана (догнать), не дальше видео
       local = prev + clamp(est - prev, 0, step * 2);
       if (v.paused && !v.ended && !v.seeking && now - (rec.playT || 0) > 300) { rec.playT = now; v.play().catch(() => {}); }
@@ -416,7 +422,7 @@ export async function openEditor(P, onExit) {
       if (nr && nr.ok && fastOn(nr)) startFast(nr, n, 0);
       else if (nr && nr.ok) { nr.vt = undefined; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
     } else t = startOf(pi) + Math.max(0, local);
-    const pf = window.__perf, p0 = pf && performance.now();
+    const pf = window.__perf, p0 = pf && performance.now(), p0d = performance.now();
     tlMove();
     tNow.textContent = fmtTime(t, true);
     const p1 = pf && performance.now();
@@ -424,7 +430,7 @@ export async function openEditor(P, onExit) {
     const p2 = pf && performance.now();
     draw();
     if (pf) { const p3 = performance.now(); pf.push([p1 - p0, p2 - p1, p3 - p2, p0 - now]); }   // замер: прокрутка, синхронизация, рисование
-    if (hud) hudTick(now, c, rec, fast);
+    if (hud) { hs && (hs.dr += performance.now() - p0d); hudTick(now, c, rec, fast); }
     if (stopAt != null && t >= stopAt) return pause();
     requestAnimationFrame(tick);
   }
@@ -496,7 +502,7 @@ export async function openEditor(P, onExit) {
       r.v = v;
       v.addEventListener("loadeddata", () => { r.ok = true; r.w = v.videoWidth; r.h = v.videoHeight; syncOv(); draw(); });
       v.addEventListener("seeked", draw);
-      v.src = url; ed.append(v);
+      v.src = url; view.prepend(v); sizeVids();
     } else {
       if (ovImgs.has(o.image)) return;
       ovImgs.set(o.image, { loading: true });
