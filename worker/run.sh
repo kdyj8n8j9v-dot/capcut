@@ -30,7 +30,7 @@ for l in sys.stdin:
     src="originals/$arg"; [ -f "$src" ] || { echo "файл не скачался или это не видео" >&2; exit 1; }
     stem="${arg%.*}"; mkdir -p work
     # прокси для монтажа на iPad: 1080 по короткой стороне, H.264 High, ключевой кадр каждые 0,5 с (точная перемотка)
-    ffmpeg -v error -y -i "$src" -vf "scale='if(gt(iw,ih),-2,1080)':'if(gt(iw,ih),1080,-2)':flags=bicubic,format=yuv420p" \
+    ffmpeg -v error -y -i "$src" -vf "scale='if(gt(iw,ih),-2,1080)':'if(gt(iw,ih),1080,-2)':flags=bicubic,fps=30,format=yuv420p" \
       -c:v libx264 -preset fast -crf 20 -g 15 -c:a aac -b:a 160k -movflags +faststart "work/$stem.proxy.mp4"
     # текст речи в журнал не пишем (репозиторий публичный)
     python3 worker/transcribe.py "$src" --language ru -o "work/$stem.transcript.json" 2> work/transcribe.log \

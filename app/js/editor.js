@@ -285,7 +285,7 @@ export async function openEditor(P, onExit) {
     // iPad/iPhone: каждое видео должно быть запущено касанием хотя бы раз
     for (const [k, r] of vids) if (k !== loc.clip.media && !r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.v.pause(); }).catch(() => {}); }
     const rec = vids.get(loc.clip.media);
-    if (rec) { rec.unlocked = true; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
+    if (rec) { rec.unlocked = true; rec.vt = undefined; rec.rateT = 0; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
     for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
     for (const a of sndEls.values()) if (a.el && !a.unlocked) { a.unlocked = true; const p = a.el.play(); p && p.then(() => syncSnd()).catch(() => {}); }
     syncOv(); syncSnd();
@@ -304,40 +304,33 @@ export async function openEditor(P, onExit) {
     if (flow) { flow = null; inner.style.transform = ""; inner.style.willChange = ""; }
     scroll.scrollLeft = t * pps;
   }
-  let hardAt = 0;
   function tick(now) {
     if (!playing || !alive) return;
     const c = P.clips[pi], rec = c && vids.get(c.media), dt = (now - lastTick) / 1000; lastTick = now;
     if (!c) return pause();
     let local;
-    // часы — свои и плавные: время идёт по настоящим часам, видео играет с той же скоростью и только подстраивается.
-    // (раньше время бралось из видео — оно меняется рывками, по кадрам, а если видео не успевало — таймлайн вставал)
-    const step = Math.min(dt, 0.1), expect = t - startOf(pi) + step;
-    local = expect;
+    // Главное — само видео со звуком: оно играет подряд и во время воспроизведения НИКОГДА не перематывается
+    // (каждая перемотка рвёт звук на «слоги» и даёт скачки кадров). Таймлайн и субтитры плавно идут за видео:
+    // между редкими обновлениями времени видео время досчитывается по часам, назад не идёт и не прыгает.
+    // Не успевает устройство — таймлайн чуть притормозит, но кадры и звук идут подряд.
+    const step = Math.min(dt, 0.1), prev = t - startOf(pi);
     if (rec && rec.ok) {
-      const v = rec.v, r = rateAt(c, expect);
-      setRate(v, r);
-      if (!v.seeking && v.readyState >= 2) {
-        // отставание — в секундах исходника (на 8× 0,1 с таймлайна — почти секунда не того кадра). Обычная задержка показа
-        // видео — 1–2 кадра экрана, т. е. на 4× около 0,2 с исходника: это не трогаем, иначе перескоки только мешают
-        const ds = v.currentTime - srcAt(c, expect);
-        if (Math.abs(ds) > Math.max(0.35, 0.12 * r) && now - hardAt > 500) {
-          hardAt = now;   // видео не успевает — перескочить вперёд, с запасом на сам перескок (на большой скорости — больше)
-          v.currentTime = Math.min(srcAt(c, Math.min(expect + (r > 4 ? 0.25 : 0.1), len(c))), c.out - 0.001);
-        } else {
-          const d = outAt(c, v.currentTime) - expect;
-          if (Math.abs(d) > 0.04) local = expect + clamp(d * 0.04, -0.1 * step, 0.1 * step);   // часы мягко (не больше 10 %) подтягиваются к видео
-        }
-      }
-      if (v.paused && !v.ended && !v.seeking) v.play().catch(() => {});
-    }   // нет копии — чёрный кадр, время идёт
-    if (local >= len(c) - 0.015 || (rec && rec.v.ended)) {
+      const v = rec.v, vt = v.currentTime;
+      if (now - (rec.rateT || 0) > 120) { rec.rateT = now; setRate(v, rateAt(c, prev)); }   // скорость меняем не чаще ~8 раз в секунду
+      if (vt !== rec.vt) { rec.vt = vt; rec.vWall = now; rec.vLocal = outAt(c, vt); }
+      const moving = !v.paused && !v.seeking && v.readyState >= 3;
+      const est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.05) : 0);   // досчёт — не дальше 0,05 с
+      // плавно: не назад, не быстрее чем вдвое за кадр экрана (догнать), не дальше видео
+      local = prev + clamp(est - prev, 0, step * 2);
+      if (v.paused && !v.ended && !v.seeking && now - (rec.playT || 0) > 300) { rec.playT = now; v.play().catch(() => {}); }
+    } else local = prev + step;   // нет копии — чёрный кадр, время идёт по часам
+    if (local >= len(c) - 0.015 || (rec && (rec.v.ended || rec.v.currentTime >= c.out - 0.02))) {
       if (rec) rec.v.pause();
       pi++;
       if (pi >= P.clips.length) { playing = false; t = total(); tlSettle(); syncBar(); draw(); return; }
       const n = P.clips[pi], nr = vids.get(n.media);
       t = startOf(pi);
-      if (nr && nr.ok) { nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
+      if (nr && nr.ok) { nr.vt = undefined; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
     } else t = startOf(pi) + Math.max(0, local);
     const pf = window.__perf, p0 = pf && performance.now();
     tlMove();
