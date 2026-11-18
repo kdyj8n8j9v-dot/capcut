@@ -287,8 +287,28 @@ async function run(label, viewport, scale) {
   ok(await ed(() => window.__ed.P.overlays[1].end) < oe0 - 0.1, "видео-наложение укорачивается за край");
   await page.click(".panel >> text=Удалить наложение");
   ok(await ed(() => window.__ed.P.overlays.length) === 1, "наложение удаляется");
+  // титры: свой текст поверх видео
+  await page.click('.panel-head >> text=Готово');
+  await page.click('[data-tool=text]'); await page.click("text=Добавить текст здесь");
+  await page.waitForFunction(() => window.__ed.P.texts.length === 1 && document.querySelector(".tx.sel"));
+  await page.fill("textarea.txt", "ЗАГОЛОВОК\nвторая строка");
+  const tx0 = await ed(() => window.__ed.P.texts[0]);
+  await ed(() => window.__ed.seek(window.__ed.P.texts[0].start + 1)); await page.waitForTimeout(300);
+  ok(tx0.text === "ЗАГОЛОВОК\nвторая строка" && await alphaAt(0.5, 0.3) >= 0, "титр добавлен, текст правится, Enter — новая строка");
+  const subs0 = await ed(() => JSON.stringify(window.__ed.P.subs.style));
+  await page.click(".panel .tabs >> text=Стили"); await page.click('.presets [aria-label="Неон"]'); await page.waitForTimeout(200);
+  ok(await ed(() => window.__ed.P.texts[0].style.glow) > 0 && await ed(() => JSON.stringify(window.__ed.P.subs.style)) === subs0, "стиль титра меняется, субтитры не задеты");
+  await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 8000 });
+  const vb3 = await page.locator(".view canvas").first().boundingBox();
+  await page.mouse.move(vb3.x + vb3.width * 0.5, vb3.y + vb3.height * 0.3); await page.mouse.down(); await page.mouse.move(vb3.x + vb3.width * 0.5 + 1, vb3.y + vb3.height * 0.15, { steps: 4 }); await page.mouse.up();
+  ok(await ed(() => window.__ed.P.texts[0].style.y) < 0.2, "титр двигается пальцем по видео");
+  await page.click(".panel .tabs >> text=Анимация"); await page.click(".panel .seg >> text=Появление"); await page.click(".panel .tiles.anim button[aria-label='Печать']");
+  ok(await ed(() => window.__ed.P.texts[0].style.in) === "type", "у титра своя анимация");
+  await ed(() => window.__ed.seek(window.__ed.P.texts[0].start + 1.5)); await page.waitForTimeout(300);
+  await shot("7l-text");
   // музыка и звуки
   await page.click('.panel-head >> text=Готово');
+  await ed(() => window.__ed.seek(0));
   await page.click('[data-tool=sound]'); await page.click("text=Добавить музыку или звук здесь");
   await page.click(".sheet .item.snd >> text=Добавить");
   await page.waitForFunction(() => window.__ed.P.sounds.length === 1 && document.querySelector(".sn.sel"));
@@ -343,6 +363,7 @@ async function run(label, viewport, scale) {
   ok(job.subs.lines.some((l) => l.style?.font === "Oswald") && job.subs.lines.some((l) => l.words.some((w) => w.style?.color === "#ff00aa")) && job.subs.clouds?.length === 1 && job.subs.clouds[0].a === 0.8, "свои настройки строк и слов и облако ушли сборщику");
   ok(job.subs.lines.some((l) => l.style?.layer === 1), "слой субтитра ушёл сборщику");
   ok(job.overlays?.length === 1 && job.overlays[0].path === "Для монтажа ПАК/Стикеры/Звезда.png" && job.overlays[0].in === "pop" && !job.overlays[0].image, "наложение ушло сборщику (путь к картинке в MEGA)");
+  ok(job.subs.lines.some((l) => l.layer >= 100 && l.style.in === "type" && l.words.some((w) => w.br)), "титр ушёл сборщику вместе со своим стилем");
   ok(job.sounds?.length === 1 && job.sounds[0].path === "Для монтажа ПАК/Музыка/Спокойная.webm" && job.sounds[0].volume === 0.4 && job.sounds[0].duck, "музыка ушла сборщику (путь в MEGA, громкость, приглушение)");
   ok(job.subs.masks?.length === 1 && job.subs.masks[0].shape === "ellipse" && job.subs.masks[0].start === 0, "маска клипа ушла сборщику");
   ok(!d2.includes(job.name) && !d2.includes("clips"), "в GitHub ушёл только номер задания");

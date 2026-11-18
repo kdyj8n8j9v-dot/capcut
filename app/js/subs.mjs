@@ -104,6 +104,20 @@ export function buildLines(clips, words, style) {
   return lines;
 }
 
+// Титры: свой текст поверх видео, не привязанный к речи. Тот же движок и те же стили, что у субтитров.
+export const TEXT_DEFAULT = { font: "Montserrat", size: 0.08, y: 0.3, wrap: 0.85, maxChars: 99, hl: "none", in: "pop", inDur: 0.3, out: "fade", outDur: 0.25, shadow: 0.35, stroke: 0 };
+// texts: [{ id, text, start, end, layer, style }] → строки для drawSubs (у каждой свой полный стиль). Слова раскладываются
+// по первым секундам титра, чтобы работали «по словам», «по буквам» и подсветка слов.
+export function textLines(texts) {
+  return (texts || []).filter((x) => x.text && x.text.trim() && x.end > x.start).map((x) => {
+    const st = normStyle({ ...TEXT_DEFAULT, ...(x.style || {}) }), toks = [];
+    x.text.split("\n").forEach((row, r, all) => { const ws = row.trim().split(/\s+/).filter(Boolean); ws.forEach((w, i) => toks.push({ text: show(w, st), br: i === ws.length - 1 && r < all.length - 1 })); });
+    const n = toks.length, span = Math.min((x.end - x.start) * 0.6, n * 0.3);
+    return { start: x.start, end: x.end, layer: 100 + (x.layer | 0), style: st, raw: x.text, text: true,
+      words: toks.map((w, i) => ({ ...w, start: x.start + span * i / n, end: x.start + span * (i + 1) / n })) };
+  });
+}
+
 // Полоса кадра, в которую попадают субтитры (сборщик рисует и накладывает только её). Чётные числа.
 export function band(W, H, style, lines, clouds) {
   let y0 = H, y1 = 0;
@@ -195,7 +209,7 @@ function drawLine(ctx, W, H, t, line, style) {
       arr.forEach((ch, i) => { const adv = ctx.measureText(arr.slice(0, i + 1).join("")).width; chars.push({ ch, x: prev + i * ls, w: adv - prev, gi: gi++ }); prev = adv; });
       width = prev + Math.max(0, arr.length - 1) * ls;
     } else { width = ctx.measureText(w.text).width; gi += w.text.length; }
-    if (rows[rows.length - 1].length && rw + sp + width > maxW) { rows.push([]); rw = 0; }
+    if (rows[rows.length - 1].length && (rw + sp + width > maxW || (wi > 0 && line.words[wi - 1].br))) { rows.push([]); rw = 0; }   // br — своя новая строка (титры)
     const row = rows[rows.length - 1];
     const x = rw + (row.length ? sp : 0);
     row.push({ w, wi, width, x, chars, font, px: w.style && w.style.size ? w.style.size * W : px }); rw = x + width; row.width = rw;

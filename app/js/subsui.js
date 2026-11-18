@@ -206,7 +206,7 @@ export function subsPanel(api) {
         h("div.sl-top", {}, "Цвет ключевых слов"), h("p.hint", {}, "Ключевое слово отмечается так: вкладка «Текст» → нажать на строку → нажать на слово."), picker("emColor")]];
   }
   const TABS = ["Стили", "Текст", "Шрифт", "Цвет", "Анимация"];
-  const allowed = wordMode ? [2, 3] : [0, 1, 2, 3, 4];
+  const allowed = api.kind === "text" ? [0, 2, 3, 4] : wordMode ? [2, 3] : [0, 1, 2, 3, 4];
   if (!allowed.includes(tab)) { tab = allowed[0]; return subsPanel(api); }
   // ——— что меняем: все субтитры, выбранные или одно слово
   const sel = api.selLines(), one = sel.length === 1 ? sel[0] : null;
@@ -222,6 +222,9 @@ export function subsPanel(api) {
     !api.all && one && (wordsOpen || wordMode
       ? h("div.wrow", {}, P.words[one.key].slice(one.i0, one.i1 + 1).map((w, k) => h("button.wchip.sm" + (api.word && api.word.idx === one.i0 + k ? ".on" : ""), { onclick: () => api.setWord(api.word && api.word.idx === one.i0 + k ? null : one.i0 + k) }, w.text)))
       : one.i1 > one.i0 && h("button.link.sm", { onclick: () => { wordsOpen = true; rerender(); } }, "Изменить только одно слово")));
+  if (api.kind === "text") return [head("Текст"), ...(api.top || []),
+    h("div.seg.scroll.tabs", {}, TABS.map((n, i) => allowed.includes(i) && h("button" + (i === tab ? ".on" : ""), { onclick: () => { tab = i; rerender(); } }, n))),
+    h("div.sliders", {}, body), ...(api.bottom || [])];
   return [head("Субтитры"), scopeBox,
     h("div.seg.scroll.tabs", {}, TABS.map((n, i) => allowed.includes(i) && h("button" + (i === tab ? ".on" : ""), { onclick: () => { tab = i; rerender(); } }, n))),
     h("div.sliders", {}, body),

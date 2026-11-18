@@ -72,6 +72,7 @@ clouds: [ { id, start, end, x, y, w, h, a, soft, color, fade } ]
 overlays: [ { id, kind: "image"|"video", image?|media?, from? (видео: секунда в исходнике), start, end, layer,
               x, y (центр, доли кадра), scale (ширина в долях кадра), rot, opacity, radius, flip,
               in, inDur, out, outDur, loop, mask? } ]          варианты анимаций — OV_IN / OV_OUT / OV_LOOP в app/js/overlays.mjs
+texts:    [ { id, text (\n — новая строка), start, end, layer, style } ]   титры; style — как у субтитров (SUB_DEFAULT, TEXT_DEFAULT)
 sounds:   [ { id, audio: <ключ>, from, start, end, layer, volume, fadeIn, fadeOut, duck } ]   музыка и звуки
 audios:   { <ключ>: { name, dur, path } }           path — файл в MEGA, как у картинок
 images:   { <ключ>: { name, w, h, path } }          path — файл в MEGA («Для монтажа ПАК/…» или «10 бит/.studio/media/…»)

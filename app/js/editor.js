@@ -4,7 +4,7 @@ import { db, uid, settings } from "./store.js";
 import { createRenderer, GRADE_DEFAULT, FRAME_DEFAULT, HSL_BANDS } from "./gl.js";
 import { mediaUrl, library, ensure, onMedia, busyOf, ensureWords, imageUrl, ensureImage, audioUrl, ensureAudio } from "./media.js";
 import { drawOverlays, ovAt, OV_DEFAULT, OV_IN, OV_OUT, OV_LOOP } from "./overlays.mjs";
-import { buildLines, drawSubs, drawClouds, drawMask, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
+import { buildLines, drawSubs, drawClouds, drawMask, textLines, TEXT_DEFAULT, normStyle, PRESETS, CLOUD_DEFAULT, MASK_DEFAULT, MASK_SHAPES } from "./subs.mjs";
 import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
@@ -28,7 +28,7 @@ const GROUPS = [
 const BAND_COLORS = ["#ff453a", "#ff9f0a", "#ffd60a", "#30d158", "#40c8e0", "#0a84ff", "#bf5af2", "#ff375f"];
 
 export async function openEditor(P, onExit) {
-  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {};
+  P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.format ||= "9:16"; P.volume ??= 1; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {}; P.texts ||= [];
   const root = document.getElementById("app");
   let t = 0, sel = null, pps = 40, playing = false, pi = 0, panel = null, alive = true, lastTick = 0;
   const undo = [], redo = [];
@@ -51,7 +51,7 @@ export async function openEditor(P, onExit) {
   let shown = null;
 
   // ——— история и сохранение
-  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds, overlays: P.overlays, images: P.images, sounds: P.sounds, audios: P.audios });
+  const snap = () => JSON.stringify({ clips: P.clips, grade: P.grade, format: P.format, volume: P.volume, subs: P.subs || null, words: P.words, clouds: P.clouds, overlays: P.overlays, images: P.images, sounds: P.sounds, audios: P.audios, texts: P.texts });
   let saveT;
   function save() {
     clearTimeout(saveT);
@@ -73,7 +73,7 @@ export async function openEditor(P, onExit) {
       if (!r || !alive) return;
       if (dirty && !(await ask("В облаке новая версия проекта", (r.by === "claude" ? "Её прислал чат «Монтаж»." : "Она сохранена с другого вашего устройства.") + " Загрузить её? Ваши последние правки на этом устройстве заменятся.", "Загрузить", false))) return;
       for (const k of Object.keys(P)) delete P[k];
-      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {};
+      Object.assign(P, r); P.clips ||= []; P.media ||= {}; P.grade ||= {}; P.words ||= {}; P.clouds ||= []; P.overlays ||= []; P.images ||= {}; P.sounds ||= []; P.audios ||= {}; P.texts ||= [];
       dirty = false; undo.length = redo.length = 0; sel = null; cloudSel = null; subSel = []; subAll = true; subWord = null;
       await db.put("projects", P); titleBtn.textContent = P.name;
       pause(); await loadAll(); fit(); renderPanel(); syncBar(); seek(Math.min(t, total()));
@@ -103,7 +103,7 @@ export async function openEditor(P, onExit) {
   const side = h("aside.panel", { hidden: true });
   const tNow = h("span.t-now", {}, "0:00,0"), tAll = h("span.t-all", {}, "0:00");
   const playBtn = h("button.round.play", { onclick: toggle, "aria-label": "Пуск" }, icon("play", 22));
-  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), cloudRow = h("div.tl-clouds"), ovRow = h("div.tl-ovs"), sndRow = h("div.tl-snds"), inner = h("div.tl-inner", {}, ruler, track, ovRow, subRow, cloudRow, sndRow);
+  const scroll = h("div.tl-scroll"), ruler = h("div.tl-ruler"), track = h("div.tl-track"), subRow = h("div.tl-subs"), cloudRow = h("div.tl-clouds"), ovRow = h("div.tl-ovs"), sndRow = h("div.tl-snds"), txtRow = h("div.tl-txts"), inner = h("div.tl-inner", {}, ruler, track, ovRow, txtRow, subRow, cloudRow, sndRow);
   scroll.append(inner);
   const titleBtn = h("button.title", { onclick: rename }, P.name);
   const fmtBtn = h("button.chip", { onclick: pickFormat, "aria-label": "Формат" }, P.format);
@@ -113,7 +113,7 @@ export async function openEditor(P, onExit) {
   const tools = h("nav.tools", {},
     tool("media", "plus", "Медиа", addMedia), tool("overlay", "layers", "Наложение", () => openPanel("overlay")), tool("split", "split", "Разрезать", split),
     tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("mask", "mask", "Маска", () => openPanel("mask")), tool("color", "color", "Цвет", () => openPanel("color")),
-    tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
+    tool("text", "type", "Текст", () => openPanel("text")), tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("delete", "trash", "Удалить", remove));
   const ed = h("div.ed", {},
     h("header.bar", {},
       h("button.link", { onclick: exit }, icon("back", 20), "Проекты"), titleBtn,
@@ -132,7 +132,7 @@ export async function openEditor(P, onExit) {
     empty.hidden = !none; canvas.hidden = over.hidden = guideBtn.hidden = none;
     for (const b of tools.children) {
       const id = b.dataset.tool;
-      b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel) && !(panel === "sound" && sndSel);
+      b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel) && !(panel === "sound" && sndSel) && !(panel === "text" && txtSel);
       b.classList.toggle("on", id === panel);
     }
     tAll.textContent = fmtTime(total());
@@ -221,6 +221,7 @@ export async function openEditor(P, onExit) {
     poolN = 0; drawOverlays(c2, over.width, over.height, t, P.overlays, ovSource, makeCv);
     drawClouds(c2, over.width, over.height, t, P.clouds);
     if (P.subs?.on && lines.length) drawSubs(c2, over.width, over.height, t, lines, subStyle());
+    if (P.texts.length) drawSubs(c2, over.width, over.height, t, tlines(), {});
   }
   function seek(time, fromScroll) {
     t = clamp(time, 0, total());
@@ -310,7 +311,7 @@ export async function openEditor(P, onExit) {
     const tlEl = ed.querySelector(".tl"), narrow = innerWidth < 820;
     // на телефоне с открытой панелью превью важнее: таймлайн низкий и прокручивается
     const cap = narrow && panel ? 104 : Math.round(innerHeight * (narrow ? 0.3 : 0.45));
-    const rows = ruler.offsetHeight + track.offsetHeight + (subRow.hidden ? 0 : subRow.offsetHeight + 3) + (cloudRow.hidden ? 0 : cloudRow.offsetHeight + 3) + (ovRow.hidden ? 0 : ovRow.offsetHeight + 3) + (sndRow.hidden ? 0 : sndRow.offsetHeight + 3);
+    const rows = ruler.offsetHeight + track.offsetHeight + (subRow.hidden ? 0 : subRow.offsetHeight + 3) + (cloudRow.hidden ? 0 : cloudRow.offsetHeight + 3) + (ovRow.hidden ? 0 : ovRow.offsetHeight + 3) + (sndRow.hidden ? 0 : sndRow.offsetHeight + 3) + (txtRow.hidden ? 0 : txtRow.offsetHeight + 3);
     const want = Math.min(cap, settings.get("tlh") || Math.max(112, rows + 30));
     if (Math.abs(tlEl.offsetHeight - want) > 2) tlEl.style.height = want + "px";
   }
@@ -514,6 +515,71 @@ export async function openEditor(P, onExit) {
   const sdragSEnd = (e) => { if (!sdragS || e.pointerId !== sdragS.id) return; const m = sdragS.moved; sdragS = null; if (m) { sndRow.dataset.drag = "1"; setTimeout(() => delete sndRow.dataset.drag, 60); layoutSnds(); renderPanel(); save(); } };
   sndRow.addEventListener("pointerup", sdragSEnd); sndRow.addEventListener("pointercancel", sdragSEnd);
 
+  // ——— титры: свой текст поверх видео (не из речи); своя дорожка, стили — как у субтитров
+  let txtSel = null, tdrag = null;
+  const tlines = () => textLines(P.texts);
+  const freeTxtLayer = (s, e) => { for (let n = 0; ; n++) if (!P.texts.some((x) => (x.layer | 0) === n && x.start < e && x.end > s)) return n; };
+  function addText() {
+    begin(); pause();
+    const tot = total(), start = Math.max(0, Math.min(t, tot - 0.5)), end = Math.min(tot, start + 3);
+    const x = { id: uid(), text: "Текст", start, end, style: { ...TEXT_DEFAULT } };
+    x.layer = freeTxtLayer(start, end);
+    P.texts.push(x); txtSel = x.id; loadFont(TEXT_DEFAULT.font);
+    if (panel !== "text") { panel = "text"; requestAnimationFrame(fit); }
+    layoutTexts(); draw(); renderPanel(); syncBar(); save();
+    requestAnimationFrame(() => { const ta = side.querySelector("textarea.txt"); if (ta) { ta.focus(); ta.select(); } });
+  }
+  function removeText() { begin(); P.texts = P.texts.filter((x) => x.id !== txtSel); txtSel = null; layoutTexts(); draw(); renderPanel(); syncBar(); save(); }
+  function layoutTexts() {
+    txtRow.style.width = total() * pps + "px"; txtRow.hidden = !P.texts.length;
+    for (const x of P.texts) loadFont(normStyle({ ...TEXT_DEFAULT, ...x.style }).font);
+    const n = Math.max(0, ...P.texts.map((x) => (x.layer | 0) + 1));
+    txtRow.replaceChildren(...Array.from({ length: n }, (_, k) => h("div.orow", {}, P.texts.filter((x) => (x.layer | 0) === n - 1 - k).map((x) =>
+      h("div.tx" + (x.id === txtSel ? ".sel" : ""), { "data-id": x.id, style: { left: x.start * pps + "px", width: Math.max(8, (x.end - x.start) * pps - 2) + "px" } },
+        h("span", {}, "T", (x.text || "").replace(/\n/g, " ")), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }))))));
+    autoTl(); reveal(txtRow.querySelector(".tx.sel"));
+  }
+  function selectText(id) {
+    txtSel = id; pause();
+    const x = P.texts.find((y) => y.id === id);
+    if (x && (t < x.start || t >= x.end)) seek(x.start + Math.min(0.5, (x.end - x.start) / 2));
+    if (panel !== "text") { panel = "text"; requestAnimationFrame(fit); }
+    layoutTexts(); renderPanel(); syncBar();
+  }
+  txtRow.addEventListener("click", (e) => { const el = e.target.closest(".tx"); if (!el || txtRow.dataset.drag) return; e.stopPropagation(); selectText(el.dataset.id); });
+  txtRow.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".tx.sel"); if (!el || e.button > 0) return;
+    const x = P.texts.find((y) => y.id === el.dataset.id);
+    e.preventDefault(); pause();
+    tdrag = { x, el, side: e.target.dataset.side || "m", px: e.clientX, s0: x.start, e0: x.end, id: e.pointerId, moved: false };
+    txtRow.setPointerCapture(e.pointerId);
+  });
+  txtRow.addEventListener("pointermove", (e) => {
+    const g = tdrag; if (!g || e.pointerId !== g.id) return;
+    const d = (e.clientX - g.px) / pps, x = g.x, tot = total(), len = g.e0 - g.s0;
+    if (!g.moved) { if (Math.abs(e.clientX - g.px) < 4) return; g.moved = true; begin(); }
+    if (g.side === "l") x.start = clamp(g.s0 + d, 0, x.end - 0.2);
+    else if (g.side === "r") x.end = clamp(g.e0 + d, x.start + 0.2, tot);
+    else { x.start = clamp(g.s0 + d, 0, Math.max(0, tot - len)); x.end = x.start + len; }
+    g.el.style.left = x.start * pps + "px"; g.el.style.width = Math.max(8, (x.end - x.start) * pps - 2) + "px";
+    draw();
+  });
+  const tdragEnd = (e) => { if (!tdrag || e.pointerId !== tdrag.id) return; const m = tdrag.moved; tdrag = null; if (m) { txtRow.dataset.drag = "1"; setTimeout(() => delete txtRow.dataset.drag, 60); layoutTexts(); draw(); save(); } };
+  txtRow.addEventListener("pointerup", tdragEnd); txtRow.addEventListener("pointercancel", tdragEnd);
+  // что сейчас настраивается в панели «Текст»: стиль выбранного титра
+  const POS_T = ["x", "y", "rot"];
+  const txtApi = {
+    kind: "text", P, lines: () => [], begin, seek, all: true, word: null, selLines: () => [], scope: () => "all",
+    cur: () => normStyle({ ...TEXT_DEFAULT, ...(P.texts.find((x) => x.id === txtSel)?.style || {}) }),
+    st: () => (P.texts.find((x) => x.id === txtSel).style ||= {}), gst: () => (P.texts.find((x) => x.id === txtSel).style ||= {}),
+    applyStyle(v) { const x = P.texts.find((y) => y.id === txtSel), keep = {}; for (const k of POS_T) if (x.style && k in x.style) keep[k] = x.style[k]; x.style = { ...v, maxChars: 99, wrap: 0.85, ...keep, y: keep.y ?? (x.style?.y ?? TEXT_DEFAULT.y) }; },
+    playLine() { const x = P.texts.find((y) => y.id === txtSel); if (!x) return; pause(); seek(Math.max(0, x.start - 0.05)); stopAt = Math.min(x.end, x.start + 2.5); play(); },
+    change: (fn) => { begin(); fn(); layoutTexts(); draw(); renderPanel(); save(); },
+    live: () => { draw(); save(); },
+    rerender: () => { if (panel === "text") renderPanel(); },
+    busy: () => {}, making: false, makeSubs: () => {},
+  };
+
   // ——— облака: отдельные объекты на своей дорожке
   let cloudSel = null, cdrag = null;
   function layoutClouds() {
@@ -710,7 +776,7 @@ export async function openEditor(P, onExit) {
     const marks = [];
     for (let s = 0; s <= tot + 1e-6; s += step) marks.push(h("span", { style: { left: s * pps + "px" } }, step < 1 ? fmtTime(s, true) : fmtTime(s)));
     ruler.replaceChildren(...marks); ruler.style.width = tot * pps + "px";
-    relines(); layoutClouds(); layoutOvs(); layoutSnds(); layoutBusy(); syncBar();
+    relines(); layoutClouds(); layoutOvs(); layoutSnds(); layoutTexts(); layoutBusy(); syncBar();
   }
   function layoutBusy() {
     for (const el of track.querySelectorAll(".clip")) {
@@ -752,7 +818,7 @@ export async function openEditor(P, onExit) {
     for (const c of track.querySelectorAll(".clip")) c.classList.toggle("sel", c.dataset.id === sel);
     syncBar();
   });
-  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow || e.target === sndRow) { sel = null; layout(); } });
+  scroll.addEventListener("click", (e) => { if (e.target === scroll || e.target === inner || e.target === track || e.target === ruler || e.target === subRow || e.target === cloudRow || e.target === ovRow || e.target === sndRow || e.target === txtRow) { sel = null; layout(); } });
   track.addEventListener("pointerdown", (e) => {
     const el = e.target.closest(".clip");
     if (!el || e.button > 0) return;
@@ -833,6 +899,7 @@ export async function openEditor(P, onExit) {
   function remove() {
     if (panel === "overlay" && ovSel) return removeOverlay();
     if (panel === "sound" && sndSel) return removeSound();
+    if (panel === "text" && txtSel) return removeText();
     if (panel === "cloud" && cloudSel) return removeCloud();
     const i = P.clips.findIndex((c) => c.id === sel);
     if (i < 0) return;
@@ -942,6 +1009,18 @@ export async function openEditor(P, onExit) {
           m.shape === "rect" ? msl("Скругление углов", "round", 0, 1) : null,
           msl("Поворот", "rot", -180, 180, (v) => Math.round(v) + "°", 1), msl("Растушёвка края", "feather", 0, 0.5),
           h("button.check" + (m.invert ? ".on" : ""), { onclick: () => { begin(); c.mask.invert = !m.invert; renderPanel(); draw(); save(); } }, h("i", {}, m.invert ? icon("check", 14) : null), "Наоборот: закрыть то, что внутри")].filter(Boolean) : []));
+    } else if (panel === "text") {
+      const x = P.texts.find((y) => y.id === txtSel);
+      const add = h("button.btn.primary.wide", { onclick: addText }, icon("plus", 18), "Добавить текст здесь");
+      if (!x) return side.replaceChildren(head("Текст"),
+        h("p.hint", {}, "Свой текст поверх видео: заголовок, подпись, призыв. Не зависит от речи. Стили, шрифты, цвета и анимации — те же, что у субтитров. Живёт на своей дорожке."),
+        add, P.texts.length ? h("p.hint", {}, "Чтобы изменить текст, нажмите на него на дорожке внизу или прямо на видео.") : null);
+      const ta = h("textarea.field.area.txt", { value: x.text, rows: 2, "aria-label": "Текст", autocapitalize: "sentences",
+        onfocus: () => { begin(); }, oninput: () => { x.text = ta.value; draw(); layoutTexts(); save(); } });
+      txtApi.slider = slider; txtApi.head = head;
+      txtApi.top = [ta, h("p.hint", {}, "Enter — новая строка. Двигайте текст пальцем прямо на видео, двумя пальцами — размер.")];
+      txtApi.bottom = [add, h("button.btn.wide.danger", { onclick: removeText }, "Удалить текст")];
+      side.replaceChildren(...subsPanel(txtApi).flat(9).filter(Boolean));
     } else if (panel === "overlay") {
       const o = P.overlays.find((x) => x.id === ovSel);
       const add = h("button.btn.primary.wide", { onclick: () => { pause(); openOverlayPicker({ onImage: addOverlayImage, onVideo: addOverlayVideo }); } }, icon("plus", 18), "Добавить наложение здесь");
@@ -1024,14 +1103,22 @@ export async function openEditor(P, onExit) {
       const r = canvas.getBoundingClientRect(), hit = ovAt(P.overlays, t, r.width, r.height, e.clientX - r.left, e.clientY - r.top, ovSize);
       if (hit && hit.id !== ovSel) selectOverlay(hit.id);
     }
+    if (panel === "text" && ptrs.size === 0) {   // выбрать титр пальцем: ближайший к точке из видимых сейчас
+      const r = canvas.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+      let best = null, bd = 0.12;
+      for (const x of P.texts) if (t >= x.start && t < x.end) { const st = normStyle({ ...TEXT_DEFAULT, ...x.style }), d = Math.hypot((px - st.x) * 0.5, py - st.y); if (d < bd) { bd = d; best = x; } }
+      if (best && best.id !== txtSel) selectText(best.id);
+    }
+    const tx = panel === "text" && P.texts.find((x) => x.id === txtSel && t >= x.start && t < x.end);
     const ov = panel === "overlay" && P.overlays.find((x) => x.id === ovSel && t >= x.start && t < x.end);
-    const mode = panel === "frame" ? "frame" : ov ? "ov" : mk ? "mask" : cl ? "cloud" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
+    const mode = panel === "frame" ? "frame" : tx ? "txt" : ov ? "ov" : mk ? "mask" : cl ? "cloud" : panel === "subs" && P.subs?.on && lines.length ? "subs" : null;
     if (!mode) { if (ptrs.size === 0) toggle(); return; }
     const c = mode === "frame" ? target() : null; if (mode === "frame" && !c) return;
     canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e);
     if (mode === "frame" && ptrs.size === 1) begin();
     const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
     if (mode === "frame") g0 = { mode, c, fr: { ...(c.frame ||= { ...FRAME_DEFAULT }) }, x: ps[0].clientX, y: ps[0].clientY, d };
+    else if (mode === "txt") { const st = normStyle({ ...TEXT_DEFAULT, ...tx.style }); g0 = { mode, x: tx, s0: { x: st.x, y: st.y, size: st.size }, px: ps[0].clientX, py: ps[0].clientY, x0: ps[0].clientX, y0: ps[0].clientY, d, moved: g0?.moved || false }; g0.x = ps[0].clientX; g0.y = ps[0].clientY; g0.tx = tx; }
     else if (mode === "ov") { const a = ps[1] ? Math.atan2(ps[1].clientY - ps[0].clientY, ps[1].clientX - ps[0].clientX) : 0; g0 = { mode, o: ov, s0: { x: ov.x ?? 0.5, y: ov.y ?? 0.5, scale: ov.scale ?? OV_DEFAULT.scale, rot: ov.rot || 0 }, a, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
     else if (mode === "mask") g0 = { mode: "cloud", cl: mk, s0: { x: mk.x ?? 0.5, y: mk.y ?? 0.5, w: mk.w ?? MASK_DEFAULT.w, h: mk.h ?? MASK_DEFAULT.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else if (mode === "cloud") g0 = { mode, cl, s0: { x: cl.x, y: cl.y, w: cl.w, h: cl.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
@@ -1045,6 +1132,11 @@ export async function openEditor(P, onExit) {
     if (g0.mode === "frame") {
       const fr = g0.c.frame;
       if (k) fr.scale = clamp(g0.fr.scale * k, 0.2, 4); else { fr.x = clamp(g0.fr.x + dx, -1, 1); fr.y = clamp(g0.fr.y + dy, -1, 1); }
+    } else if (g0.mode === "txt") {
+      if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
+      const st = (g0.tx.style ||= {});
+      if (k) st.size = clamp(g0.s0.size * k, 0.02, 0.3);
+      else { const x = clamp(g0.s0.x + dx, 0.05, 0.95); st.x = Math.abs(x - 0.5) < 0.02 ? 0.5 : x; st.y = clamp(g0.s0.y + dy, 0.03, 0.97); }
     } else if (g0.mode === "ov") {
       if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
       const o = g0.o;
@@ -1068,7 +1160,7 @@ export async function openEditor(P, onExit) {
     const g = g0; if (!ptrs.size) g0 = null;
     if (ptrs.size) return;
     if ((g?.mode === "subs" || g?.mode === "cloud") && !g.moved) return toggle();
-    if (g?.mode === "ov" && !g.moved) return;
+    if ((g?.mode === "ov" || g?.mode === "txt") && !g.moved) return;
     renderPanel(); save();
   };
   canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
@@ -1096,5 +1188,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
+  window.__ed = { P, seek, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total };
 }

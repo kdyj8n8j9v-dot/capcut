@@ -4,7 +4,7 @@ import { db, uid } from "./store.js";
 import { cloud, PATHS } from "./cloud.js";
 import { github, waitRun } from "./github.js";
 import { isUploaded, busyOf } from "./media.js";
-import { buildLines, normStyle, FONTS } from "./subs.mjs";
+import { buildLines, normStyle, textLines, FONTS } from "./subs.mjs";
 import { packFont } from "./fonts.js";
 
 const safe = (n) => (n || "Ролик").replace(/[\/\\:*?"<>|]/g, "-").trim() || "Ролик";
@@ -12,7 +12,7 @@ const r3 = (x) => Math.round(x * 1000) / 1000;
 export function buildJob(P, out, req) {
   const ovs = (P.overlays || []).filter((o) => o.start < P.clips.reduce((x, c) => x + c.out - c.in, 0));
   const used = [...new Set([...P.clips.map((c) => c.media), ...ovs.filter((o) => o.kind === "video").map((o) => o.media)])];
-  const style = normStyle(P.subs?.style), lines = P.subs?.on ? buildLines(P.clips, P.words || {}, style) : [];
+  const style = normStyle(P.subs?.style), lines = [...(P.subs?.on ? buildLines(P.clips, P.words || {}, style) : []), ...textLines(P.texts)];   // субтитры + титры
   const dur = P.clips.reduce((x, c) => x + c.out - c.in, 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
   const masks = []; { let at = 0; for (const c of P.clips) { const len = c.out - c.in; if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
   // свои шрифты (общий, отдельных строк и слов): сборщик возьмёт те же файлы из MEGA
@@ -26,7 +26,7 @@ export function buildJob(P, out, req) {
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
       ...(o.kind === "video" ? { clip: media, from: r3(o.from || 0) } : { path: P.images?.[image]?.path || "" }) })).filter((o) => o.kind === "video" || o.path) } : {}),
-    ...(lines.length || clouds.length || masks.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(masks.length ? { masks } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
+    ...(lines.length || clouds.length || masks.length ? { subs: { style, ...(clouds.length ? { clouds } : {}), ...(masks.length ? { masks } : {}), ...(pf.length ? { fonts: pf } : {}), lines: lines.map((l) => ({ start: r3(l.start), end: r3(l.end), ...(l.layer ? { layer: l.layer } : {}), ...(l.style ? { style: l.style } : {}), words: l.words.map((w) => ({ text: w.text, start: r3(w.start), end: r3(w.end), ...(w.em ? { em: true } : {}), ...(w.br ? { br: true } : {}), ...(w.style ? { style: w.style } : {}) })) })) } } : {}),
   };
 }
 const STEPS = [["send", "Отправляю проект"], ["queued", "Жду свободный сборщик"], ["setup", "Сборщик готовится"], ["work", "Собираю видео в 4K"], ["done", "Готово"]];
