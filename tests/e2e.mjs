@@ -407,6 +407,14 @@ async function run(label, viewport, scale) {
   await page.mouse.move(vb2.x + vb2.width * 0.5, vb2.y + vb2.height * 0.5); await page.mouse.down(); await page.mouse.move(vb2.x + vb2.width * 0.75, vb2.y + vb2.height * 0.3, { steps: 5 }); await page.mouse.up();
   const ov1 = await ed(() => window.__ed.P.overlays[0]);
   ok(ov1.x > 0.65 && ov1.y < 0.4, `наложение двигается пальцем по видео (${ov1.x.toFixed(2)}, ${ov1.y.toFixed(2)})`);
+  // ключи у наложения: ◆+ здесь, дальше другой размер — второй ключ, между ними плавно
+  await page.click('[data-tool="key-add"]');
+  await ed(() => window.__ed.seek(window.__ed.P.overlays[0].start + 1.5)); await page.waitForTimeout(200);
+  await page.locator('input[aria-label="Размер"]').fill("0.7"); await page.waitForTimeout(100);
+  const ok2 = await ed(() => { const o = window.__ed.P.overlays[0]; return { n: o.keys?.length, a: o.keys?.[0]?.scale, b: o.keys?.[1]?.scale, kf: document.querySelectorAll(".ov .kf").length }; });
+  ok(ok2.n === 2 && ok2.a === 0.3 && ok2.b === 0.7 && ok2.kf === 2, `ключи у наложения: размер ${ok2.a} → ${ok2.b}, ◆ на плашке`);
+  await shot("10k-ovkeys");
+  await ed(() => { delete window.__ed.P.overlays[0].keys; window.__ed.seek(window.__ed.P.overlays[0].start + 0.5); });
   await page.click(".panel .tabs >> text=Анимация"); await page.click(".tiles >> text=Прыжок");
   await page.click(".panel .tabs >> text=Маска"); await page.click(".panel .tiles >> text=Круг");
   ok(await ed(() => window.__ed.P.overlays[0].in === "pop" && window.__ed.P.overlays[0].mask?.shape === "ellipse"), "у наложения своя анимация и маска");
@@ -437,6 +445,14 @@ async function run(label, viewport, scale) {
   const vb3 = await page.locator(".view canvas").first().boundingBox();
   await page.mouse.move(vb3.x + vb3.width * 0.5, vb3.y + vb3.height * 0.3); await page.mouse.down(); await page.mouse.move(vb3.x + vb3.width * 0.5 + 1, vb3.y + vb3.height * 0.15, { steps: 4 }); await page.mouse.up();
   ok(await ed(() => window.__ed.P.texts[0].style.y) < 0.2, "титр двигается пальцем по видео");
+  // ключи у текста: ◆+ здесь, дальше подвинуть пальцем — второй ключ
+  await page.click('[data-tool="key-add"]');
+  await ed(() => window.__ed.seek(window.__ed.P.texts[0].start + 1.2)); await page.waitForTimeout(200);
+  await page.mouse.move(vb3.x + vb3.width * 0.5, vb3.y + vb3.height * 0.15); await page.mouse.down(); await page.mouse.move(vb3.x + vb3.width * 0.5 + 1, vb3.y + vb3.height * 0.55, { steps: 4 }); await page.mouse.up();
+  const tk = await ed(() => { const x = window.__ed.P.texts[0], K = x.keys || [], here = K.find((k) => Math.abs(k.t - 1.2) < 0.05), other = K.find((k) => k !== here); return { n: K.length, y0: other?.y, y1: here?.y, kf: document.querySelectorAll(".tx .kf").length }; });
+  ok(tk.n === 2 && tk.y1 > tk.y0 + 0.2 && tk.kf === 2, `ключи у текста: место ${tk.y0?.toFixed(2)} → ${tk.y1?.toFixed(2)}, ◆ на плашке`);
+  ok(await ed(() => window.__ed.job().subs.lines.some((l) => l.keys?.length === 2)), "ключи текста уходят сборщику");
+  await ed(() => { delete window.__ed.P.texts[0].keys; });
   await page.click(".panel .tabs >> text=Анимация"); await page.click(".panel .seg >> text=Появление"); await page.click(".panel .tiles.anim button[aria-label='Печать']");
   ok(await ed(() => window.__ed.P.texts[0].style.in) === "type", "у титра своя анимация");
   await ed(() => window.__ed.seek(window.__ed.P.texts[0].start + 1.5)); await page.waitForTimeout(300);

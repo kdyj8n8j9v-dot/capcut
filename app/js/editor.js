@@ -15,7 +15,7 @@ import { favStar, favSort, easePicker, mine } from "./fav.js";
 import { CURVES, clipLen, srcAt, outAt, rateAt, splitCurve, speedAt, VMIN, VMAX, overlapAfter, clipStarts } from "./speed.mjs";
 import { pushProject, remoteNewer } from "./sync.js";
 import { openFast, Stream } from "./fastplay.mjs";
-import { frameAt, keyAt, addKey, splitKeys } from "./keys.mjs";
+import { frameAt, keyAt, addKey, splitKeys, keyedAt, objKeyAt, addObjKey, OV_KEYS, TXT_KEYS } from "./keys.mjs";
 
 export const FORMATS = {
   "9:16": { w: 2160, h: 3840, label: "Вертикальное", hint: "Reels, Shorts, TikTok" },
@@ -659,7 +659,8 @@ export async function openEditor(P, onExit) {
     ovRow.replaceChildren(...Array.from({ length: n }, (_, k) => h("div.orow", {}, P.overlays.filter((o) => (o.layer | 0) === n - 1 - k).map((o) => {
       const r = o.kind === "image" ? ovImgs.get(o.image) : null;
       return h("div.ov" + (o.id === ovSel ? ".sel" : "") + (o.kind === "video" ? ".vid" : ""), { "data-id": o.id, style: { left: o.start * pps + "px", width: Math.max(8, (o.end - o.start) * pps - 2) + "px", ...(r && r.img ? { backgroundImage: `url(${r.img.src})` } : {}) } },
-        h("span", {}, icon(o.kind === "video" ? "film" : "photo", 12), ovName(o)), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }));
+        h("span", {}, icon(o.kind === "video" ? "film" : "photo", 12), ovName(o)), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }),
+        ...(o.keys || []).map((k) => h("i.kf", { style: { left: k.t * pps + "px" } })));
     }))));
     autoTl(); reveal(ovRow.querySelector(".ov.sel"));
   }
@@ -798,7 +799,8 @@ export async function openEditor(P, onExit) {
     const n = Math.max(0, ...P.texts.map((x) => (x.layer | 0) + 1));
     txtRow.replaceChildren(...Array.from({ length: n }, (_, k) => h("div.orow", {}, P.texts.filter((x) => (x.layer | 0) === n - 1 - k).map((x) =>
       h("div.tx" + (x.id === txtSel ? ".sel" : ""), { "data-id": x.id, style: { left: x.start * pps + "px", width: Math.max(8, (x.end - x.start) * pps - 2) + "px" } },
-        h("span", {}, icon("type", 12), (x.text || "").replace(/\n/g, " ")), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }))))));
+        h("span", {}, icon("type", 12), (x.text || "").replace(/\n/g, " ")), h("i.g.l", { "data-side": "l" }), h("i.g.r", { "data-side": "r" }),
+        ...(x.keys || []).map((k) => h("i.kf", { style: { left: k.t * pps + "px" } })))))));
     autoTl(); reveal(txtRow.querySelector(".tx.sel"));
   }
   function selectText(id) {
@@ -1232,8 +1234,18 @@ export async function openEditor(P, onExit) {
     toast("Копия — сразу после клипа");
   }
 
+  // ключи наложения и текста: что видно сейчас и что править (есть ключи — правка ставит/меняет ключ в этом месте)
+  const ovBase = (o) => ({ ...OV_DEFAULT, ...o });
+  const ovNow = (o) => (o.keys?.length ? { ...ovBase(o), ...keyedAt(o.keys, t - o.start, OV_KEYS, ovBase(o)) } : ovBase(o));
+  const ovEdit = (o) => (o.keys?.length ? addObjKey(o, t - o.start, OV_KEYS, ovBase(o)) : o);
+  const txBase = (x) => normStyle({ ...TEXT_DEFAULT, ...x.style });
+  const txNow = (x) => (x.keys?.length ? { ...txBase(x), ...keyedAt(x.keys, t - x.start, TXT_KEYS, txBase(x)) } : txBase(x));
+  const txEdit = (x) => (x.keys?.length ? addObjKey(x, t - x.start, TXT_KEYS, txBase(x)) : (x.style ||= {}));
   // ——— ключи кнопками над таймлайном (у клипа под линией или выбранного)
   function keySpot() {
+    // открыто наложение или текст — ключи у него; иначе — у кадра клипа
+    if (panel === "overlay" && ovSel) { const o = P.overlays.find((x) => x.id === ovSel); return o && t >= o.start && t < o.end ? { kind: "ov", obj: o, tau: t - o.start } : null; }
+    if (panel === "text" && txtSel) { const x = P.texts.find((y) => y.id === txtSel); return x && t >= x.start && t < x.end ? { kind: "txt", obj: x, tau: t - x.start } : null; }
     const c = target(); if (!c) return null;
     const i = P.clips.indexOf(c), local = t - startOf(i);
     if (local < -0.01 || local > len(c) + 0.01) return null;   // выбранный клип не под линией — не трогаем
@@ -1242,10 +1254,21 @@ export async function openEditor(P, onExit) {
   function syncKeys() {
     const k = keySpot(), add = acts.querySelector('[data-tool="key-add"]'), del = acts.querySelector('[data-tool="key-del"]');
     if (!add) return;
-    add.disabled = !k; del.disabled = !(k && keyAt(k.c, k.local));
+    add.disabled = !k; del.disabled = !(k && (k.obj ? objKeyAt(k.obj, k.tau) : keyAt(k.c, k.local)));
   }
   function keyHere(on) {
-    const k = keySpot(); if (!k) return toast("Поставьте линию на клип");
+    const k = keySpot(); if (!k) return toast(panel === "overlay" || panel === "text" ? "Поставьте линию на это наложение или текст" : "Поставьте линию на клип");
+    if (k.obj) {   // наложение или текст
+      const have = objKeyAt(k.obj, k.tau);
+      if (on && have) return toast("Здесь уже есть ключ");
+      if (!on && !have) return toast("Здесь нет ключа — поставьте линию на ◆");
+      begin(); pause();
+      if (on) { if (k.kind === "ov") addObjKey(k.obj, k.tau, OV_KEYS, ovBase(k.obj)); else addObjKey(k.obj, k.tau, TXT_KEYS, txBase(k.obj)); toast("Ключ поставлен. Переставьте линию и подвиньте — появится второй"); }
+      else { k.obj.keys = k.obj.keys.filter((x) => x !== have); if (!k.obj.keys.length) delete k.obj.keys; }
+      if (k.kind === "ov") layoutOvs(); else { layoutTexts(); relines(); }
+      renderPanel(); draw(); save(); syncKeys();
+      return;
+    }
     const have = keyAt(k.c, k.local);
     if (on && have) return toast("Здесь уже есть ключ");
     if (!on && !have) return toast("Здесь нет ключа — поставьте линию на ◆");
@@ -1519,7 +1542,7 @@ export async function openEditor(P, onExit) {
       const ta = h("textarea.field.area.txt", { value: x.text, rows: 2, "aria-label": "Текст", autocapitalize: "sentences",
         onfocus: () => { begin(); }, oninput: () => { x.text = ta.value; draw(); layoutTexts(); save(); } });
       txtApi.slider = slider; txtApi.head = head;
-      txtApi.top = [ta, h("p.hint", {}, "Enter — новая строка. Двигайте текст пальцем прямо на видео, двумя пальцами — размер.")];
+      txtApi.top = [ta, h("p.hint", {}, x.keys?.length ? "У текста есть ключи ◆: место и размер меняйте пальцем на видео — правка встанет ключом в этом месте." : "Enter — новая строка. Двигайте текст пальцем прямо на видео, двумя пальцами — размер. Ключи ◆+ у ▶ — чтобы текст двигался.")];
       txtApi.bottom = [add, h("button.btn.wide.danger", { onclick: removeText }, "Удалить текст")];
       side.replaceChildren(...subsPanel(txtApi).flat(9).filter(Boolean));
     } else if (panel === "overlay") {
@@ -1529,7 +1552,9 @@ export async function openEditor(P, onExit) {
         h("p.hint", {}, "Фото, стикер или видео поверх основного видео — например, картинка-в-картинке, логотип, скриншот. Каждое наложение живёт на своей дорожке: его можно двигать по времени, тянуть за края, поднимать выше других."),
         add, P.overlays.length ? h("p.hint", {}, "Чтобы изменить наложение, нажмите на него на дорожке внизу или прямо на видео.") : null);
       const ch = (fn) => { begin(); fn(); layoutOvs(); syncOv(); draw(); renderPanel(); save(); };
-      const osl = (label, key, min, max, show, step) => slider(label, () => o[key] ?? OV_DEFAULT[key], (v) => { o[key] = v; }, { min, max, step, def: OV_DEFAULT[key], show });
+      const osl = (label, key, min, max, show, step) => OV_KEYS.includes(key)
+        ? slider(label, () => ovNow(o)[key], (v) => { const had = !!objKeyAt(o, t - o.start); ovEdit(o)[key] = v; if (o.keys?.length && !had) layoutOvs(); }, { min, max, step, def: OV_DEFAULT[key], show })   // с ключами — правка в этом месте
+        : slider(label, () => o[key] ?? OV_DEFAULT[key], (v) => { o[key] = v; }, { min, max, step, def: OV_DEFAULT[key], show });
       const pct = (v) => Math.round(v * 100), sec = (v) => v.toFixed(2).replace(".", ",") + " с";
       const tiles = (list, on, pick, fav) => h("div.tiles", {}, (fav ? favSort(fav, list) : list).map(([k, n]) => h("button" + (on === k ? ".on" : ""), { onclick: () => pick(k) }, n, fav && k !== "none" && favStar(fav, k, renderPanel))));
       const sz = ovSize(o) || { w: 1, h: 1 }, fr = out(), cover = Math.max(1, (fr.h / fr.w) * (sz.w / sz.h));
@@ -1734,8 +1759,8 @@ export async function openEditor(P, onExit) {
     if (mode === "frame" && ptrs.size === 1) begin();
     const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
     if (mode === "frame") { const lc = clamp(t - startOf(P.clips.indexOf(c)), 0, len(c)), obj = c.keys?.length ? addKey(c, lc) : (c.frame ||= { ...FRAME_DEFAULT }); g0 = { mode, c, obj, fr: { ...frameAt(c, lc) }, x: ps[0].clientX, y: ps[0].clientY, d }; }
-    else if (mode === "txt") { const st = normStyle({ ...TEXT_DEFAULT, ...tx.style }); g0 = { mode, x: tx, s0: { x: st.x, y: st.y, size: st.size }, px: ps[0].clientX, py: ps[0].clientY, x0: ps[0].clientX, y0: ps[0].clientY, d, moved: g0?.moved || false }; g0.x = ps[0].clientX; g0.y = ps[0].clientY; g0.tx = tx; }
-    else if (mode === "ov") { const a = ps[1] ? Math.atan2(ps[1].clientY - ps[0].clientY, ps[1].clientX - ps[0].clientX) : 0; g0 = { mode, o: ov, s0: { x: ov.x ?? 0.5, y: ov.y ?? 0.5, scale: ov.scale ?? OV_DEFAULT.scale, rot: ov.rot || 0 }, a, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
+    else if (mode === "txt") { const st = txNow(tx); g0 = { mode, x: tx, s0: { x: st.x, y: st.y, size: st.size }, px: ps[0].clientX, py: ps[0].clientY, x0: ps[0].clientX, y0: ps[0].clientY, d, moved: g0?.moved || false }; g0.x = ps[0].clientX; g0.y = ps[0].clientY; g0.tx = tx; }
+    else if (mode === "ov") { const a = ps[1] ? Math.atan2(ps[1].clientY - ps[0].clientY, ps[1].clientX - ps[0].clientX) : 0, on = ovNow(ov); g0 = { mode, o: ov, s0: { x: on.x, y: on.y, scale: on.scale, rot: on.rot || 0 }, a, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
     else if (mode === "mask") g0 = { mode: "cloud", cl: mk, s0: { x: mk.x ?? 0.5, y: mk.y ?? 0.5, w: mk.w ?? MASK_DEFAULT.w, h: mk.h ?? MASK_DEFAULT.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else if (mode === "cloud") g0 = { mode, cl, s0: { x: cl.x, y: cl.y, w: cl.w, h: cl.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
     else { const st = subApi.cur(); g0 = { mode, s0: { x: st.x, y: st.y, size: st.size }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
@@ -1750,12 +1775,13 @@ export async function openEditor(P, onExit) {
       if (k) fr.scale = clamp(g0.fr.scale * k, 0.2, 4); else { fr.x = clamp(g0.fr.x + dx, -1, 1); fr.y = clamp(g0.fr.y + dy, -1, 1); }
     } else if (g0.mode === "txt") {
       if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
-      const st = (g0.tx.style ||= {});
+      if (!g0.w) { const had = g0.tx.keys?.length && objKeyAt(g0.tx, t - g0.tx.start); g0.w = txEdit(g0.tx); if (g0.tx.keys?.length && !had) layoutTexts(); }
+      const st = g0.w;
       if (k) st.size = clamp(g0.s0.size * k, 0.02, 0.3);
       else { const x = clamp(g0.s0.x + dx, 0.05, 0.95); st.x = Math.abs(x - 0.5) < 0.02 ? 0.5 : x; st.y = clamp(g0.s0.y + dy, 0.03, 0.97); }
     } else if (g0.mode === "ov") {
-      if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
-      const o = g0.o;
+      if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); const had = g0.o.keys?.length && objKeyAt(g0.o, t - g0.o.start); g0.w = ovEdit(g0.o); if (g0.o.keys?.length && !had) layoutOvs(); }
+      const o = g0.w || g0.o;
       if (k) { o.scale = clamp(g0.s0.scale * k, 0.03, 4); const a = Math.atan2(ps[1].clientY - ps[0].clientY, ps[1].clientX - ps[0].clientX); let rot = g0.s0.rot + (a - g0.a) * 180 / Math.PI; rot = ((rot + 540) % 360) - 180; o.rot = Math.abs(rot) < 3 ? 0 : Math.round(rot); }
       else { const x = clamp(g0.s0.x + dx, -0.5, 1.5), y = clamp(g0.s0.y + dy, -0.5, 1.5); o.x = Math.abs(x - 0.5) < 0.015 ? 0.5 : x; o.y = Math.abs(y - 0.5) < 0.015 ? 0.5 : y; }
     } else if (g0.mode === "cloud") {

@@ -1,7 +1,6 @@
 # Сейчас (монтажная программа) — обновлено 2026-11-18
 Коротко, до 30 строк. Обновлять в конце каждой большой задачи и коммитить.
-- План и решения владельца — `docs/STUDIO-PLAN.md`. Репозиторий публичный: имена роликов и текст речи в журнал Actions не писать.
-- Приложение `app/` (чистые модули JS, MEGA — `app/vendor/mega.mjs`). Формат проекта — `docs/PROJECT-FORMAT.md`.
+- План — `docs/STUDIO-PLAN.md`, формат проекта — `docs/PROJECT-FORMAT.md`. Репозиторий публичный: имена роликов и речь в журнал Actions не писать.
 - Автопроверка: `bash tests/run.sh` (Chromium, `tests/fake.js`, iPad и iPhone). Плавность: `node tests/realplay.mjs копия.mp4`. Анимации: `node tests/sheet.mjs`.
 - Экспорт: проект → MEGA «/10 бит/.studio/jobs/<номер>.json», в GitHub — номер, файлы — «#<sha256>». `req=selftest` — проверка сборки. Программы сборщика — из кэша GitHub (`~/tools`). «В MEGA / На устройство / Туда и туда».
 - Один код рисования для превью и сборщика (`worker/subs.mjs`): `app/js/subs.mjs` (субтитры, титры `P.texts`, облака, маски,
@@ -27,4 +26,5 @@
 - Свой цвет клипа (11-19): `clip.grade`/`clip.look` (`gradeOf`), «Цвет» → «Весь ролик / Этот клип» (из строки клипа — клип), значок ◐;
   сборщик красит такие клипы по кадрам (`own`).
 - Ключевые кадры кадра клипа (11-19): `clip.keys` [{src, scale, x, y, rot}] — `app/js/keys.mjs` (smoothstep), панель «Кадр»,
-  ◆ на клипе, кнопки ◆+ ◆− у ▶ (`keyHere`); сборщик — render.py `key_frame`. Дальше: ключи у наложений и текста.
+  ◆ на клипе, кнопки ◆+ ◆− у ▶ (`keyHere`); сборщик — render.py `key_frame`. Ключи наложений (x, y, scale, rot,
+  opacity) и текста (x, y, size): `obj.keys` [{t,…}] → `keyedAt` в overlays.mjs/subs.mjs (и у сборщика).

@@ -43,3 +43,32 @@ export function splitKeys(c, b, cut) {
 }
 // для сборщика: ключи во времени клипа на таймлайне [[секунда, scale, x, y, rot], …]
 export const keysForJob = (c) => (c.keys || []).map((k) => [Math.round(outAt(c, k.src) * 1000) / 1000, ...KEY_PROPS.map((p) => +(k[p] ?? FR0[p]).toFixed(4))]);
+
+// Ключи у наложений и текста: obj.keys = [{ t — секунды от начала объекта, …свойства }]. Тот же smoothstep.
+// Свойства: наложение — x, y, scale, rot, opacity; текст — x, y, size (в его style).
+export const OV_KEYS = ["x", "y", "scale", "rot", "opacity"], TXT_KEYS = ["x", "y", "size"];
+export function keyedAt(keys, tau, props, base) {
+  const r = {};
+  if (!keys || !keys.length) return r;
+  const val = (k, p) => k[p] ?? base[p];
+  if (tau <= keys[0].t) { for (const p of props) r[p] = val(keys[0], p); return r; }
+  for (let i = 1; i < keys.length; i++) {
+    if (tau <= keys[i].t) {
+      const a = keys[i - 1], b = keys[i], e = ss((tau - a.t) / Math.max(1e-6, b.t - a.t));
+      for (const p of props) { const va = val(a, p), vb = val(b, p); r[p] = typeof va === "number" && typeof vb === "number" ? va + (vb - va) * e : vb; }
+      return r;
+    }
+  }
+  for (const p of props) r[p] = val(keys[keys.length - 1], p);
+  return r;
+}
+export const objKeyAt = (obj, tau) => (obj.keys || []).find((k) => Math.abs(k.t - tau) < 0.04) || null;
+// ключ объекта в момент tau (новый — с видом объекта в этот миг); base — значения без ключей
+export function addObjKey(obj, tau, props, base) {
+  const have = objKeyAt(obj, tau);
+  if (have) return have;
+  const k = { t: Math.round(tau * 1000) / 1000, ...pickProps({ ...base, ...keyedAt(obj.keys, tau, props, base) }, props) };
+  obj.keys = [...(obj.keys || []), k].sort((a, b) => a.t - b.t);
+  return k;
+}
+const pickProps = (o, props) => { const r = {}; for (const p of props) r[p] = o[p]; return r; };

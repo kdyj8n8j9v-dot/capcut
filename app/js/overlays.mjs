@@ -1,6 +1,7 @@
 // Наложения: фото, стикеры и видео поверх основного видео. Один и тот же код рисует превью в приложении
 // и готовое видео на сборщике (worker/subs.mjs) — поэтому превью совпадает с итогом. Здесь нет ничего от браузера.
 import { drawMaskCached, ease } from "./subs.mjs";
+import { keyedAt, OV_KEYS } from "./keys.mjs";
 
 export const OV_DEFAULT = { x: 0.5, y: 0.5, scale: 0.6, rot: 0, opacity: 1, radius: 0, flip: false,
   in: "fade", inDur: 0.3, out: "fade", outDur: 0.3, loop: "none" };
@@ -15,7 +16,7 @@ const back = (p) => 1 + 2.70158 * Math.pow(p - 1, 3) + 1.70158 * Math.pow(p - 1,
 // Положение и вид наложения в момент t: { cx, cy, w, h, rot, sx, sy, a, clip } или null, если его не видно.
 // srcW, srcH — размер картинки или кадра видео.
 export function ovPose(o0, t, W, H, srcW, srcH) {
-  const o = { ...OV_DEFAULT, ...o0 };
+  const o0d = { ...OV_DEFAULT, ...o0 }, o = o0.keys && o0.keys.length ? { ...o0d, ...keyedAt(o0.keys, t - o0.start, OV_KEYS, o0d) } : o0d;   // ключевые кадры: место, размер, поворот, прозрачность
   if (t < o.start || t >= o.end || !srcW || !srcH) return null;
   const w = o.scale * W, h = w * srcH / srcW, tau = t - o.start, len = o.end - o.start;
   const F = { cx: o.x * W, cy: o.y * H, w, h, rot: o.rot * Math.PI / 180, sx: o.flip ? -1 : 1, sy: 1, a: o.opacity, clip: null };

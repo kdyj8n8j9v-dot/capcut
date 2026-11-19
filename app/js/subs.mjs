@@ -1,4 +1,5 @@
 import { clipLen, outAt, overlapAfter } from "./speed.mjs";
+import { keyedAt, TXT_KEYS } from "./keys.mjs";
 // Субтитры: разбивка слов на строки и отрисовка. Один и тот же код рисует превью в приложении
 // и готовое видео на сборщике (worker/subs.mjs) — поэтому превью совпадает с итогом. Здесь нет ничего от браузера.
 export const FONTS = { Montserrat: "Montserrat_800ExtraBold.ttf", Inter: "Inter_800ExtraBold.ttf", Rubik: "Rubik_800ExtraBold.ttf", Oswald: "Oswald_600SemiBold.ttf", Caveat: "Caveat_700Bold.ttf" };
@@ -132,13 +133,14 @@ export function textLines(texts) {
     const st = normStyle({ ...TEXT_DEFAULT, ...(x.style || {}) }), toks = [];
     x.text.split("\n").forEach((row, r, all) => { const ws = row.trim().split(/\s+/).filter(Boolean); ws.forEach((w, i) => toks.push({ text: show(w, st), br: i === ws.length - 1 && r < all.length - 1 })); });
     const n = toks.length, span = Math.min((x.end - x.start) * 0.6, n * 0.3);
-    return { start: x.start, end: x.end, layer: 100 + (x.layer | 0), style: st, raw: x.text, text: true,
+    return { start: x.start, end: x.end, layer: 100 + (x.layer | 0), style: st, raw: x.text, text: true, ...(x.keys && x.keys.length ? { keys: x.keys } : {}),
       words: toks.map((w, i) => ({ ...w, start: x.start + span * i / n, end: x.start + span * (i + 1) / n })) };
   });
 }
 
 // Полоса кадра, в которую попадают субтитры (сборщик рисует и накладывает только её). Чётные числа.
 export function band(W, H, style, lines, clouds) {
+  if ((lines || []).some((l) => l.keys)) return { y: 0, h: H };   // текст движется по ключам — нужен весь кадр
   let y0 = H, y1 = 0;
   for (const c0 of clouds || []) { const c = { ...CLOUD_DEFAULT, ...c0 }; y0 = Math.min(y0, (c.y - c.h / 2) * H - 2); y1 = Math.max(y1, (c.y + c.h / 2) * H + 2); }
   const seen = new Set();
@@ -249,7 +251,9 @@ export function drawSubs(ctx, W, H, t, lines, style) {
   return act.length > 0;
 }
 function drawLine(ctx, W, H, t, line, style) {
-  const st = normStyle(line.style ? { ...style, ...line.style } : style), px = st.size * W, lh = px * st.lh, maxW = W * st.wrap / st.sx, sp = Math.max(0, px * 0.32 + (st.ls + st.ws) * px), ls = st.ls * px;
+  let st0 = line.style ? { ...style, ...line.style } : style;
+  if (line.keys) st0 = { ...st0, ...keyedAt(line.keys, t - line.start, TXT_KEYS, normStyle(st0)) };   // ключевые кадры текста: место и размер
+  const st = normStyle(st0), px = st.size * W, lh = px * st.lh, maxW = W * st.wrap / st.sx, sp = Math.max(0, px * 0.32 + (st.ls + st.ws) * px), ls = st.ls * px;
   const perChar = st.in === "letters" || st.in === "type" || st.loop === "wave" || ls !== 0;
   ctx.save();
   const fontOf = (w) => `${(w && w.style && w.style.size ? w.style.size * W : px)}px "${(w && w.style && w.style.font) || st.font}", sans-serif`;
