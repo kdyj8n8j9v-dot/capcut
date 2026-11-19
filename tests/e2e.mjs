@@ -166,6 +166,12 @@ async function run(label, viewport, scale) {
   await page.click('.keys [data-key="del"]');
   ok(await ed(() => window.__ed.P.clips[0].keys?.length) === 1, "«Убрать ключ»");
   await ed(() => { delete window.__ed.P.clips[0].keys; window.__ed.seek(1); });
+  // ключ кнопками над таймлайном: ◆+ ставит, ◆− убирает (на месте линии)
+  await page.click('[data-tool="key-add"]'); await page.waitForTimeout(100);
+  ok(await ed(() => window.__ed.P.clips.some((c) => c.keys?.length === 1)) && await page.locator('[data-tool="key-del"]').isEnabled(), "◆+ над таймлайном ставит ключ, ◆− становится доступна");
+  await shot("9l-keybtns");
+  await page.click('[data-tool="key-del"]'); await page.waitForTimeout(100);
+  ok(await ed(() => !window.__ed.P.clips.some((c) => c.keys)) && await page.locator('[data-tool="key-del"]').isDisabled(), "◆− убирает ключ");
   await page.click(".panel-head >> text=Готово");
   // маска
   await tool("mask"); await page.click(".tiles >> text=Круг");

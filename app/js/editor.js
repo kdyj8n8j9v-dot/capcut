@@ -146,7 +146,10 @@ export async function openEditor(P, onExit) {
     tool("speed", "speed", "Скорость", () => openPanel("speed")), tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("mask", "mask", "Маска", () => openPanel("mask")),
     tool("transition", "transition", "Переход", clipTransition), tool("c-dup", "copy", "Копия", duplicate), tool("color", "color", "Цвет", () => { colorScope = 1; openPanel("color"); }), tool("c-delete", "trash", "Удалить", remove));
   const CLIP_PANELS = new Set(["frame", "speed", "mask", "transition"]);
-  const acts = h("div.acts", {}, h("button.round.act", { "data-tool": "split", onclick: split, "aria-label": "Разрезать" }, icon("split", 20)), h("button.round.act.act-del", { "data-tool": "delete", onclick: remove, "aria-label": "Удалить" }, icon("trash", 18)));
+  const acts = h("div.acts", {}, h("button.round.act", { "data-tool": "split", onclick: split, "aria-label": "Разрезать" }, icon("split", 20)), h("button.round.act.act-del", { "data-tool": "delete", onclick: remove, "aria-label": "Удалить" }, icon("trash", 18)),
+    // ключевые кадры кадра клипа под линией: поставить / убрать ключ здесь
+    h("button.round.act", { "data-tool": "key-add", onclick: () => keyHere(true), "aria-label": "Поставить ключ" }, icon("keyplus", 20)),
+    h("button.round.act", { "data-tool": "key-del", onclick: () => keyHere(false), "aria-label": "Убрать ключ" }, icon("keyminus", 20)));
   const ed = h("div.ed", {},
     h("header.bar", {},
       h("button.link", { onclick: exit }, icon("back", 20), "Проекты"), titleBtn,
@@ -170,6 +173,7 @@ export async function openEditor(P, onExit) {
     const bar = clipMode ? clipBar : tools;
     for (const b of [...bar.children, ...acts.children]) {
       const id = b.dataset.tool;
+      if (id === "key-add" || id === "key-del") { syncKeys(); continue; }
       if (bar === clipBar && id !== "delete") { b.disabled = false; b.classList.toggle("on", id === panel); continue; }
       b.disabled = id !== "media" && none || id === "delete" && !sel && !(panel === "cloud" && cloudSel) && !(panel === "overlay" && ovSel) && !(panel === "sound" && sndSel) && !(panel === "text" && txtSel);
       b.classList.toggle("on", id === panel);
@@ -367,6 +371,7 @@ export async function openEditor(P, onExit) {
     }
     if (!fromScroll) tlSettle();
     tNow.textContent = fmtTime(t, true);
+    syncKeys();
     syncOv(); syncSnd();
     draw();
     if (!playing) prime();
@@ -1225,6 +1230,29 @@ export async function openEditor(P, onExit) {
     const c = P.clips[i], b = JSON.parse(JSON.stringify(c)); b.id = uid(); delete b.tr;
     P.clips.splice(i + 1, 0, b); sel = b.id; layout(); seek(startOf(i + 1) + 0.05); save(); syncBar();
     toast("Копия — сразу после клипа");
+  }
+
+  // ——— ключи кнопками над таймлайном (у клипа под линией или выбранного)
+  function keySpot() {
+    const c = target(); if (!c) return null;
+    const i = P.clips.indexOf(c), local = t - startOf(i);
+    if (local < -0.01 || local > len(c) + 0.01) return null;   // выбранный клип не под линией — не трогаем
+    return { c, local: clamp(local, 0, len(c)) };
+  }
+  function syncKeys() {
+    const k = keySpot(), add = acts.querySelector('[data-tool="key-add"]'), del = acts.querySelector('[data-tool="key-del"]');
+    if (!add) return;
+    add.disabled = !k; del.disabled = !(k && keyAt(k.c, k.local));
+  }
+  function keyHere(on) {
+    const k = keySpot(); if (!k) return toast("Поставьте линию на клип");
+    const have = keyAt(k.c, k.local);
+    if (on && have) return toast("Здесь уже есть ключ");
+    if (!on && !have) return toast("Здесь нет ключа — поставьте линию на ◆");
+    begin(); pause();
+    if (on) { k.c.frame ||= { ...FRAME_DEFAULT }; addKey(k.c, k.local); toast("Ключ поставлен. Переставьте линию и поменяйте кадр — появится второй"); }
+    else { k.c.keys = k.c.keys.filter((x) => x !== have); if (!k.c.keys.length) delete k.c.keys; }
+    layout(); if (panel === "frame") renderPanel(); draw(); save(); syncKeys();
   }
 
   // ——— действия

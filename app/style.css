@@ -277,7 +277,7 @@ textarea.txt { font-size: 17px; }
 /* выделение — только у того, что открыто в панели: остальные выбранные элементы выглядят обычно */
 .ed:not([data-panel=overlay]) .ov.sel, .ed:not([data-panel=text]) .tx.sel, .ed:not([data-panel=sound]) .sn.sel, .ed:not([data-panel=cloud]) .cl.sel { box-shadow: none; }
 .ed:not([data-panel=overlay]) .ov.sel .g, .ed:not([data-panel=text]) .tx.sel .g, .ed:not([data-panel=sound]) .sn.sel .g, .ed:not([data-panel=cloud]) .cl.sel .g { display: none; }
-@media (max-width: 480px) { .zoom > .round { display: none; } .acts { margin-right: 0; } }
+@media (max-width: 480px) { .zoom > .round { display: none; } .acts { margin-right: 0; gap: 5px; } .acts .round { width: 34px; height: 34px; } .acts .round .ic { width: 17px; height: 17px; } .transport { padding: 6px 10px; } }
 .tl-add { flex: none; width: 56px; height: 56px; margin-left: 10px; border-radius: 10px; background: var(--s2); display: grid; place-items: center; color: var(--accent); }
 .tl-head { position: absolute; left: 50%; top: 12px; bottom: 4px; width: 2px; margin-left: -1px; border-radius: 1px; background: #fff; pointer-events: none; box-shadow: 0 0 4px rgba(0,0,0,.8); z-index: 6; }
 
