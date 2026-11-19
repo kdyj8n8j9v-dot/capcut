@@ -5,25 +5,27 @@ import { cloud, PATHS } from "./cloud.js";
 import { github, waitRun } from "./github.js";
 import { isUploaded, busyOf } from "./media.js";
 import { buildLines, normStyle, textLines, FONTS } from "./subs.mjs";
-import { clipLen, curveMap } from "./speed.mjs";
+import { clipLen, curveMap, clipStarts, overlapAfter } from "./speed.mjs";
 import { packFont } from "./fonts.js";
 
 const safe = (n) => (n || "Ролик").replace(/[\/\\:*?"<>|]/g, "-").trim() || "Ролик";
 const r3 = (x) => Math.round(x * 1000) / 1000;
 export function buildJob(P, out, req) {
-  const ovs = (P.overlays || []).filter((o) => o.start < P.clips.reduce((x, c) => x + clipLen(c), 0));
+  const { starts, total: dur } = clipStarts(P.clips);   // с учётом наплывов
+  const ovs = (P.overlays || []).filter((o) => o.start < dur);
   const used = [...new Set([...P.clips.map((c) => c.media), ...ovs.filter((o) => o.kind === "video").map((o) => o.media)])];
   const style = normStyle(P.subs?.style), lines = [...(P.subs?.on ? buildLines(P.clips, P.words || {}, style) : []), ...textLines(P.texts)];   // субтитры + титры
-  const dur = P.clips.reduce((x, c) => x + clipLen(c), 0), clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
-  const masks = []; { let at = 0; for (const c of P.clips) { const len = clipLen(c); if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(at), end: r3(at + len) }); at += len; } }
-  const trs = []; { let at = 0; P.clips.forEach((c, i) => { at += clipLen(c); if (c.tr && c.tr.kind !== "none" && i < P.clips.length - 1) trs.push({ at: r3(at), kind: c.tr.kind, dur: c.tr.dur || 0.5 }); }); }
+  const clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
+  const masks = []; P.clips.forEach((c, i) => { if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(starts[i]), end: r3(starts[i] + clipLen(c)) }); });
+  // переходы-рисунки поверх видео; наплыв — смешение самих клипов: его собирает render.py (xfade у клипа)
+  const trs = []; P.clips.forEach((c, i) => { if (c.tr && c.tr.kind !== "none" && c.tr.kind !== "dissolve" && i < P.clips.length - 1) trs.push({ at: r3(starts[i + 1]), kind: c.tr.kind, dur: c.tr.dur || 0.5 }); });
   // свои шрифты (общий, отдельных строк и слов): сборщик возьмёт те же файлы из MEGA
   const names = new Set([style.font, ...lines.flatMap((l) => [l.style?.font, ...l.words.map((w) => w.style?.font)])].filter((n) => n && !FONTS[n]));
   const pf = [...names].map(packFont).filter(Boolean).map((f) => ({ name: f.name, path: f.path + "/" + f.file }));
   return {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
-    timeline: P.clips.map((c) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(c.curve ? { map: curveMap(c) } : c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}) })),
+    timeline: P.clips.map((c, i) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(overlapAfter(P.clips, i) > 0 ? { xfade: r3(overlapAfter(P.clips, i)) } : {}), ...(c.curve ? { map: curveMap(c) } : c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1, ...(P.voice || {}) },
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
@@ -40,7 +42,7 @@ export function openExport(P, out) {
   let alive = true, blob = null, loading = false, loadErr = "";
   const box = h("div.export");
   const s = sheet("Экспорт", box, { onclose: () => { alive = false; } });
-  const dur = P.clips.reduce((a, c) => a + clipLen(c), 0);
+  const dur = clipStarts(P.clips).total;
   const saveP = () => db.put("projects", P).catch(() => {});
   let deliver = settings.get("deliver") || "mega";
   const where = (d) => d === "mega" ? "Готовый файл появится в MEGA, в папке «10 бит»." : d === "device" ? "Готовый файл приложение само скачает — останется сохранить его в «Файлы». В MEGA он не останется." : "Готовый файл будет в MEGA, в папке «10 бит», и приложение само скачает его на устройство.";

@@ -9,10 +9,10 @@ import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
 import { openLibrary, openOverlayPicker, openSoundPicker } from "./library.js";
-import { openExport } from "./export.js";
+import { openExport, buildJob } from "./export.js";
 import { LOOKS, scaleLook } from "./looks.js";
 import { favStar, favSort, easePicker, mine } from "./fav.js";
-import { CURVES, clipLen, srcAt, outAt, rateAt, splitCurve, speedAt, VMIN, VMAX } from "./speed.mjs";
+import { CURVES, clipLen, srcAt, outAt, rateAt, splitCurve, speedAt, VMIN, VMAX, overlapAfter, clipStarts } from "./speed.mjs";
 import { pushProject, remoteNewer } from "./sync.js";
 import { openFast, Stream } from "./fastplay.mjs";
 
@@ -40,14 +40,24 @@ export async function openEditor(P, onExit) {
   const thumbs = new Map();   // key → [{ t, c }]
   const out = () => FORMATS[P.format] || FORMATS["9:16"];
   const sp = (c) => c.speed || 1, len = clipLen;   // длина на таймлайне с учётом скорости и кривой
-  const total = () => P.clips.reduce((a, c) => a + len(c), 0);
-  const startOf = (i) => P.clips.slice(0, i).reduce((a, c) => a + len(c), 0);
+  // начало клипов и длина ролика — с учётом наплывов (клипы на стыке перекрываются, как в CapCut)
+  const total = () => clipStarts(P.clips).total;
+  const startOf = (i) => (i >= P.clips.length ? total() : clipStarts(P.clips).starts[i] || 0);
+  const ovl = (i) => overlapAfter(P.clips, i);
   function locate(time) {
-    let a = 0;
+    const { starts } = clipStarts(P.clips);
     for (let i = 0; i < P.clips.length; i++) {
-      const d = len(P.clips[i]);
+      const a = starts[i], d = len(P.clips[i]);
       if (time < a + d || i === P.clips.length - 1) return { i, clip: P.clips[i], local: clamp(time - a, 0, d) };
-      a += d;
+    }
+    return null;
+  }
+  // наплыв в момент time: { i — первый клип, b — второй, w — доля второго, localB — время от начала второго }
+  function mixAt(time) {
+    const { starts } = clipStarts(P.clips);
+    for (let i = 0; i < P.clips.length - 1; i++) {
+      const o = ovl(i), s0 = starts[i + 1];
+      if (o > 0 && time >= s0 && time < s0 + o) return { i, b: P.clips[i + 1], w: (time - s0) / o, localB: time - s0 };
     }
     return null;
   }
@@ -204,6 +214,34 @@ export async function openEditor(P, onExit) {
   // ——— видео
   let vw = 2, vh = 2;
   function sizeVids(w = vw, h = vh) { vw = w; vh = h; for (const v of view.querySelectorAll("video.src")) { v.style.width = w + "px"; v.style.height = h + "px"; } }
+  // отметка каждого показанного кадра — на самом элементе (на наплыве элементы меняются местами)
+  function watchFrames(v) {
+    v.__f = 0;
+    if (!v.requestVideoFrameCallback) return;
+    const onF = (n, m) => { v.__f++; if (!v.paused && !v.seeking && m) { v.__mt = m.mediaTime; v.__mw = m.expectedDisplayTime || n; } v.requestVideoFrameCallback(onF); };
+    v.requestVideoFrameCallback(onF);
+  }
+  // второй элемент того же файла: наплыв между двумя кусками одного видео (после «Разрезать») — играют оба сразу
+  const vids2 = new Map();
+  function vid2(key) {
+    const r = vids.get(key);
+    if (!r || !r.url) return null;
+    let x = vids2.get(key);
+    if (x && x.url === r.url) return x;
+    if (x) { x.v.src = ""; x.v.remove(); }
+    const v = h("video.src", { playsInline: true, preload: "auto", crossOrigin: "anonymous" });
+    v.setAttribute("playsinline", ""); v.setAttribute("webkit-playsinline", "");
+    x = { v, ok: false, url: r.url, w: 0, h: 0 };
+    v.addEventListener("loadeddata", () => { x.ok = true; x.w = v.videoWidth; x.h = v.videoHeight; seek(t); });
+    v.addEventListener("seeked", draw);
+    watchFrames(v); v.src = r.url; view.prepend(v); sizeVids(); vids2.set(key, x);
+    return x;
+  }
+  // элемент, который показывает второй клип наплыва
+  function mixEl(m) {
+    const a = P.clips[m.i];
+    return a.media === m.b.media ? vid2(m.b.media) : vids.get(m.b.media);
+  }
   async function video(key) {
     if (vids.has(key)) return vids.get(key);
     const url = await mediaUrl(key);
@@ -216,11 +254,11 @@ export async function openEditor(P, onExit) {
     v.addEventListener("loadeddata", () => { rec.w = v.videoWidth; rec.h = v.videoHeight; rec.ok = true; seek(t); makeThumbs(key); });
     v.addEventListener("seeked", draw);
     // счётчик новых кадров: пока видео играет, превью перерисовывает картинку только с новым кадром
-    rec.frame = 0;
+    rec.frame = 0; watchFrames(v);
     // и отметка каждого показанного кадра: какой кадр исходника (mediaTime) и когда он на экране — по ней идут часы
     if (v.requestVideoFrameCallback) {
       rec.rvfc = true;
-      const onF = (n, m) => { rec.frame++; if (!v.paused && !v.seeking && m) { rec.mt = m.mediaTime; rec.mw = m.expectedDisplayTime || n; } v.requestVideoFrameCallback(onF); };
+      const onF = () => { rec.frame++; v.requestVideoFrameCallback(onF); };
       v.requestVideoFrameCallback(onF);
     }
     // видео — настоящего размера прямо под картинкой превью (её закрывает холст). Раньше оно было 2×2 точки и прозрачным:
@@ -288,8 +326,11 @@ export async function openEditor(P, onExit) {
     const D = window.__perfD, q = () => D && performance.now(), a0 = q();
     // кадр декодера: при воспроизведении — текущий; сразу после паузы, пока видео-элемент ищет точный кадр, — последний показанный
     const fz = !rec || !rec.ok ? null : playing ? (fastOn(rec) ? rec.stream?.cur : null) : rec.v.seeking ? rec.hold : null;
-    if (fz) R.draw(fz.canvas, rec.w, rec.h, out(), loc.clip.frame, P.grade, fz.timestamp);
-    else if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade, playing && rec.rvfc ? rec.frame : null);
+    // наплыв: второй клип смешивается с первым (его видео играет одновременно)
+    const mx = loc && mixAt(t), eb = mx && mx.i === loc.i ? mixEl(mx) : null;
+    const mix = eb && eb.ok ? { video: eb.v, sw: eb.w, sh: eb.h, fr: mx.b.frame, frame: playing && eb.v.__mt != null ? eb.v.__f : null, w: mx.w } : null;
+    if (fz) R.draw(fz.canvas, rec.w, rec.h, out(), loc.clip.frame, P.grade, fz.timestamp, mix);
+    else if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade, playing && rec.rvfc ? rec.v.__f : null, mix);
     else R.draw(null);
     const a1 = q();
     const c2 = over.getContext("2d");
@@ -315,6 +356,11 @@ export async function openEditor(P, onExit) {
         setRate(rec.v, rateAt(loc.clip, loc.local));
         if (Math.abs(rec.v.currentTime - want) > 0.005) rec.v.currentTime = want;
       }
+    }
+    const mx = loc && mixAt(t), eb = mx && mx.i === loc.i ? mixEl(mx) : null;
+    if (eb && eb.ok && !playing) {   // наплыв на паузе: второе видео — на свой кадр
+      const want = Math.min(srcAt(mx.b, mx.localB), mx.b.out - 0.001);
+      eb.v.pause(); if (Math.abs(eb.v.currentTime - want) > 0.005) eb.v.currentTime = want;
     }
     if (!fromScroll) tlSettle();
     tNow.textContent = fmtTime(t, true);
@@ -343,7 +389,7 @@ export async function openEditor(P, onExit) {
       rec.stream = new Stream(rec.fast, src);
     }, 150);
   }
-  function setVolume() { for (const r of vids.values()) for (const m of [r.v, r.a]) if (m) { m.volume = clamp(P.volume, 0, 1); m.muted = P.volume <= 0; } }
+  function setVolume() { for (const r of [...vids.values(), ...vids2.values()]) for (const m of [r.v, r.a]) if (m) { m.volume = clamp(P.volume, 0, 1); m.muted = P.volume <= 0; } }
   function play() {
     if (!P.clips.length) return;
     if (t >= total() - 0.05) seek(0);
@@ -356,7 +402,7 @@ export async function openEditor(P, onExit) {
     // iPad: звук каждого <audio> тоже надо один раз запустить касанием
     for (const [k, r] of vids) if (r.a && !r.aUnlocked && k !== loc.clip.media) { r.aUnlocked = true; const p = r.a.play(); p && p.then(() => { if (!playing || P.clips[pi]?.media !== k) r.a.pause(); }).catch(() => {}); }
     if (rec && fastOn(rec)) { rec.unlocked = rec.aUnlocked = true; rec.v.pause(); startFast(rec, loc.clip, loc.local); }
-    else if (rec) { rec.unlocked = true; rec.vt = undefined; rec.mt = null; rec.rateT = 0; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
+    else if (rec) { rec.unlocked = true; rec.vt = undefined; rec.v.__mt = null; rec.rateT = 0; setRate(rec.v, rateAt(loc.clip, loc.local)); rec.v.play().catch(() => {}); }
     for (const [id, r] of ovVids) if (!r.unlocked) { r.unlocked = true; const p = r.v.play(); p && p.then(() => syncOv()).catch(() => {}); }
     for (const a of sndEls.values()) if (a.el && !a.unlocked) { a.unlocked = true; const p = a.el.play(); p && p.then(() => syncSnd()).catch(() => {}); }
     syncOv(); syncSnd();
@@ -364,11 +410,13 @@ export async function openEditor(P, onExit) {
   }
   function pause() {
     stopAt = null; if (!playing) return; playing = false; tlSettle();
-    for (const r of vids.values()) { r.v.pause(); stopFast(r); r.fastOff = false; r.lagMs = 0; }
+    for (const r of vids.values()) { r.v.pause(); r.v.__on = false; stopFast(r); r.fastOff = false; r.lagMs = 0; }
+    for (const r of vids2.values()) { r.v.pause(); r.v.__on = false; }
+    setVolume();
     seek(t);   // видео-элемент встаёт на точный кадр паузы (пока он ищет — виден последний кадр декодера)
     syncOv(); syncSnd(); syncBar(); for (const k of vids.keys()) swapLight(k);
   }
-  function toggle() { playing ? pause() : play(); }
+  function toggle() { if (playing) pause(); else { stopAt = null; play(); } }   // ▶ — без ограничения показа перехода
   // таймлайн при воспроизведении едет как картинка на видеочипе (transform), а не прокруткой: на iPad прокрутку ведёт
   // отдельный системный процесс, и команда «прокрутить» каждый кадр давала рывки и отставание дорожки
   let flow = null;
@@ -393,10 +441,10 @@ export async function openEditor(P, onExit) {
       hs = { t0: now, n: 0, vf: 0, st: 0, lag: 0, dr: 0, r0: rateN, lastT: t, lastF: null };
     }
     hs.n++;
-    const f = fast ? rec.stream.cur?.timestamp : rec?.frame;
+    const f = fast ? rec.stream.cur?.timestamp : rec?.v.__f;
     if (f !== hs.lastF) { hs.vf++; hs.lastF = f; }
     if (t === hs.lastT) hs.st++; hs.lastT = t;
-    if (rec && rec.ok) { const have = fast ? (rec.stream.cur ? rec.stream.cur.timestamp - rec.fast.off : null) : (rec.mt != null ? rec.mt : rec.v.currentTime); /* отметка показанного кадра точнее currentTime */ if (have != null) hs.lag = Math.max(hs.lag, srcAt(c, t - startOf(pi)) - have); }
+    if (rec && rec.ok) { const have = fast ? (rec.stream.cur ? rec.stream.cur.timestamp - rec.fast.off : null) : (rec.v.__mt != null ? rec.v.__mt : rec.v.currentTime); /* отметка показанного кадра точнее currentTime */ if (have != null) hs.lag = Math.max(hs.lag, srcAt(c, t - startOf(pi)) - have); }
   }
   function tick(now) {
     if (!playing || !alive) return;
@@ -419,11 +467,11 @@ export async function openEditor(P, onExit) {
       if (vt !== rec.vt) { rec.vt = vt; rec.vWall = now; rec.vLocal = outAt(c, vt); }
       const moving = !v.paused && !v.seeking && v.readyState >= 3;
       let est;
-      if (!fast && rec.mt != null && moving) {
+      if (!fast && v.__mt != null && moving) {
         // по отметке показанного кадра: сколько прошло с его показа × скорость видео, но не дальше ~1,5 кадра —
         // время не убегает вперёд картинки (раньше убегало до 0,4 с исходника и потом стояло, ожидая видео)
-        const ahead = clamp((now - rec.mw) / 1000, 0, 0.05) * v.playbackRate;
-        est = outAt(c, Math.min(rec.mt + ahead, c.out));
+        const ahead = clamp((now - v.__mw) / 1000, 0, 0.05) * v.playbackRate;
+        est = outAt(c, Math.min(v.__mt + ahead, c.out));
       } else est = rec.vLocal + (moving ? Math.min((now - rec.vWall) / 1000, 0.05) : 0);
       // плавные часы: каждый кадр экрана время идёт на столько, сколько прошло (с учётом скорости видео и кривой),
       // а по отметке показанного кадра лишь мягко подправляется (≤60 % шага) — не стоит и не уходит от картинки.
@@ -446,13 +494,30 @@ export async function openEditor(P, onExit) {
     }
     if (local >= len(c) - 0.015 || (clk && (clk.ended || clk.currentTime >= c.out - 0.02))) {
       if (rec) { rec.v.pause(); stopFast(rec); }
+      const endA = startOf(pi) + len(c);
       pi++;
       if (pi >= P.clips.length) { playing = false; t = total(); tlSettle(); syncBar(); draw(); return; }
       const n = P.clips[pi], nr = vids.get(n.media);
       t = startOf(pi);
-      if (nr && nr.ok && fastOn(nr)) startFast(nr, n, 0);
-      else if (nr && nr.ok) { nr.vt = undefined; nr.mt = null; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
-    } else t = startOf(pi) + Math.max(0, local);
+      const eb = ovl(pi - 1) > 0 ? mixEl({ i: pi - 1, b: n }) : null;
+      if (eb && eb.ok && eb.v.__on && nr) {
+        // после наплыва второй клип уже играет — продолжаем его, без перемотки (тот же файл — меняем элементы местами)
+        if (eb !== nr) { const tmp = nr.v; nr.v = eb.v; eb.v = tmp; }
+        nr.v.__on = false; nr.vt = undefined; nr.rateT = 0; setVolume();
+        t = Math.max(t, endA);
+      } else if (nr && nr.ok && fastOn(nr)) startFast(nr, n, 0);
+      else if (nr && nr.ok) { nr.vt = undefined; nr.v.__mt = null; nr.rateT = 0; nr.v.currentTime = n.in; setRate(nr.v, rateAt(n, 0)); nr.v.play().catch(() => {}); }
+    } else {
+      t = startOf(pi) + Math.max(0, local);
+      const mx = mixAt(t);
+      if (mx && mx.i === pi) {   // наплыв: второй клип уже играет вместе с первым, звук плавно переходит
+        const eb = mixEl(mx);
+        if (eb && eb.ok) {
+          if (!eb.v.__on) { eb.v.__on = true; eb.v.__mt = null; eb.v.currentTime = Math.min(srcAt(mx.b, mx.localB), mx.b.out - 0.001); setRate(eb.v, rateAt(mx.b, mx.localB)); eb.v.play().catch(() => {}); }
+          const vol = clamp(P.volume, 0, 1); eb.v.volume = vol * mx.w; if (rec) rec.v.volume = vol * (1 - mx.w);
+        }
+      }
+    }
     const pf = window.__perf, p0 = pf && performance.now(), p0d = performance.now();
     tlMove();
     tNow.textContent = fmtTime(t, true);
@@ -996,7 +1061,7 @@ export async function openEditor(P, onExit) {
   function layout() {
     const tot = total();
     track.replaceChildren(...P.clips.map((c) => {
-      const el = h("div.clip" + (c.id === sel ? ".sel" : "") + (vids.has(c.media) ? "" : ".missing"), { "data-id": c.id, style: { width: len(c) * pps + "px" } },
+      const el = h("div.clip" + (c.id === sel ? ".sel" : "") + (vids.has(c.media) ? "" : ".missing"), { "data-id": c.id, style: { width: len(c) * pps + "px", marginRight: -ovl(P.clips.indexOf(c)) * pps + "px" } },
         h("canvas"), h("span.clip-len", {}, fmtTime(len(c), true)),
         vids.has(c.media) ? null : h("span.clip-note", {}, "нет копии на устройстве"),
         h("div.grip.l", { "data-side": "l" }), h("div.grip.r", { "data-side": "r" }));
@@ -1011,7 +1076,7 @@ export async function openEditor(P, onExit) {
     // значки переходов на стыках клипов
     let at = 0;
     const si = P.clips.findIndex((c) => c.id === sel);   // у выделенного клипа края тянутся — значки рядом прячем
-    P.clips.forEach((c, i) => { at += len(c); if (i < P.clips.length - 1 && i !== si && i !== si - 1) track.append(h("button.trb" + (c.tr && c.tr.kind !== "none" ? ".on" : "") + (trSel === c.id ? ".sel" : ""), { "data-id": c.id, "aria-label": "Переход", style: { left: at * pps + "px" } }, c.tr && c.tr.kind !== "none" ? "◆" : "◇")); });
+    P.clips.forEach((c, i) => { at = startOf(i + 1) + ovl(i) / 2; if (i < P.clips.length - 1 && i !== si && i !== si - 1) track.append(h("button.trb" + (c.tr && c.tr.kind !== "none" ? ".on" : "") + (trSel === c.id ? ".sel" : ""), { "data-id": c.id, "aria-label": "Переход", style: { left: at * pps + "px" } }, c.tr && c.tr.kind !== "none" ? "◆" : "◇")); });
     relines(); layoutClouds(); layoutOvs(); layoutSnds(); layoutTexts(); layoutBusy(); syncBar();
   }
   function layoutBusy() {
@@ -1165,7 +1230,7 @@ export async function openEditor(P, onExit) {
     const c = loc.clip, cut = srcAt(c, loc.local);
     const b = { ...c, id: uid(), in: cut, frame: c.frame && { ...c.frame }, ...(c.mask ? { mask: { ...c.mask } } : {}) };
     if (c.curve) { const [ca, cb] = splitCurve(c.curve, (cut - c.in) / (c.out - c.in)); c.curve = ca; b.curve = cb; }   // кривая делится вместе с клипом
-    c.out = cut;
+    c.out = cut; delete c.tr;   // стык справа (и его переход) теперь у правой половины
     P.clips.splice(loc.i + 1, 0, b);
     sel = b.id; layout(); seek(t); save();
   }
@@ -1324,7 +1389,7 @@ export async function openEditor(P, onExit) {
       const ch = (fn) => { begin(); fn(); layout(); renderPanel(); save(); preview(); };
       const preview = () => { const s0 = startOf(i + 1); pause(); seek(Math.max(0, s0 - (c.tr?.dur || 0.6) / 2 - 0.4)); stopAt = Math.min(total(), s0 + (c.tr?.dur || 0.6) / 2 + 0.4); play(); };
       side.replaceChildren(head("Переход"),
-        h("p.hint", {}, `Между клипами ${i + 1} и ${i + 2}. Переход закрывает кадр и открывает следующий; текст и субтитры остаются поверх.`),
+        h("p.hint", {}, tr.kind === "dissolve" ? `Между клипами ${i + 1} и ${i + 2}. Наплыв — клипы накладываются и плавно перетекают, как в CapCut; ролик короче на длину наплыва.` : `Между клипами ${i + 1} и ${i + 2}. Переход закрывает кадр и открывает следующий; текст и субтитры остаются поверх.`),
         h("div.tiles", {}, favSort("transition", TRANSITIONS).map(([k, n]) => h("button" + (tr.kind === k ? ".on" : ""), { onclick: () => ch(() => { if (k === "none") delete c.tr; else c.tr = { ...tr, kind: k }; }) }, n, k !== "none" && favStar("transition", k, renderPanel)))),
         tr.kind !== "none" ? slider("Длительность", () => c.tr.dur || 0.6, (v) => { c.tr.dur = v; draw(); }, { min: 0.2, max: 2, def: 0.6, show: (v) => v.toFixed(1).replace(".", ",") + " с" }) : null,
         tr.kind !== "none" ? h("div.row-btns", {}, h("button.btn.sm", { onclick: preview }, "Показать"),
@@ -1489,7 +1554,7 @@ export async function openEditor(P, onExit) {
   }
   // ——— переходы: стыки клипов (переход хранится у клипа слева: clip.tr)
   let trSel = null;
-  function trList() { const out = []; let at = 0; P.clips.forEach((c, i) => { at += len(c); if (c.tr && c.tr.kind !== "none" && i < P.clips.length - 1) out.push({ at, kind: c.tr.kind, dur: c.tr.dur || 0.6 }); }); return out; }
+  function trList() { const out = []; P.clips.forEach((c, i) => { if (c.tr && c.tr.kind !== "none" && c.tr.kind !== "dissolve" && i < P.clips.length - 1) out.push({ at: startOf(i + 1), kind: c.tr.kind, dur: c.tr.dur || 0.6 }); }); return out; }
   // ——— кривая скорости: маленький график шаблона и редактор точек
   let speedTab = 0;
   const ly = (v) => Math.log(v / VMIN) / Math.log(VMAX / VMIN);   // скорость → высота (логарифмическая шкала)
@@ -1697,6 +1762,7 @@ export async function openEditor(P, onExit) {
     alive = false; ro.disconnect(); offMedia(); document.removeEventListener("keydown", onKey);
     for (const r of vids.values()) { r.v.src = ""; r.v.remove(); }
     for (const r of ovVids.values()) if (r.v) { r.v.src = ""; r.v.remove(); }
+    for (const r of vids2.values()) { r.v.src = ""; r.v.remove(); }
     for (const r of sndEls.values()) if (r.el) { r.el.pause(); r.el.src = ""; }
     P.updated = Date.now(); P.duration = total();
     db.put("projects", P).finally(onExit);
@@ -1706,5 +1772,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, srcAt, rateAt, pause, recOf: (k) => vids.get(k), quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
+  window.__ed = { P, seek, srcAt, ovl, mixAt, startOf, job: () => buildJob(P, out(), "test"), rateAt, pause, recOf: (k) => vids.get(k), quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
 }

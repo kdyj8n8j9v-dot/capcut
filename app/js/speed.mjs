@@ -67,3 +67,17 @@ export function splitCurve(pts, u) {
   a.push([1, v]); b.unshift([0, v]);
   return [a, b];
 }
+
+// Наплыв (как в CapCut): клип и следующий накладываются на время наплыва — ролик короче на эту длину.
+// overlapAfter(clips, i) — сколько секунд клип i перекрывается со следующим (не больше 45 % каждого из двух).
+export function overlapAfter(clips, i) {
+  const c = clips[i], n = clips[i + 1];
+  if (!c || !n || !c.tr || c.tr.kind !== "dissolve") return 0;
+  return Math.max(0, Math.min(c.tr.dur || 0.6, clipLen(c) * 0.45, clipLen(n) * 0.45));
+}
+// начало каждого клипа на таймлайне и длина ролика с учётом наплывов
+export function clipStarts(clips) {
+  const starts = []; let a = 0;
+  clips.forEach((c, i) => { starts.push(a); a += clipLen(c) - overlapAfter(clips, i); });
+  return { starts, total: a };
+}

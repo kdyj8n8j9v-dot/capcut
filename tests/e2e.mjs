@@ -213,6 +213,19 @@ async function run(label, viewport, scale) {
   await ed(() => window.__ed.seek(window.__ed.trList()[0].at)); await page.waitForTimeout(250);
   ok(await page.evaluate(() => { const c = document.querySelector("canvas.over"); return c.getContext("2d").getImageData(c.width >> 1, c.height >> 1, 1, 1).data[3]; }) > 240, "на стыке кадр закрыт переходом");
   await shot("9d-transition");
+  // наплыв: клипы накладываются, ролик короче на длину наплыва; на стыке видны оба
+  const Tn = await ed(() => window.__ed.total());
+  await page.click(".panel .tiles >> text=Наплыв"); await page.waitForTimeout(300); await page.waitForFunction(() => !window.__ed.playing, null, { timeout: 8000 });
+  const Td = await ed(() => window.__ed.total()), ovd = await ed(() => window.__ed.ovl(0));
+  ok(ovd > 0.2 && Math.abs(Tn - Td - ovd) < 0.01, `наплыв: ролик короче на ${ovd.toFixed(2)} с (${Tn.toFixed(2)} → ${Td.toFixed(2)})`);
+  await ed(() => { const E = window.__ed; E.seek(E.startOf(1) + E.ovl(0) / 2); }); await page.waitForTimeout(600);
+  ok(await ed(() => { const m = window.__ed.mixAt(window.__ed.t); return !!m && Math.abs(m.w - 0.5) < 0.05; }), "в середине наплыва смешиваются оба клипа поровну");
+  await shot("9e-dissolve");
+  ok(await ed(() => { const j = window.__ed.job(); return j.timeline[0].xfade > 0.2 && !(j.subs?.transitions || []).some((x) => x.kind === "dissolve"); }), "сборщику уходит наплыв (xfade) у клипа");
+  await ed(() => window.__ed.seek(window.__ed.startOf(1) - 0.4)); await page.click('[aria-label="Пуск"]');
+  const passed = await page.waitForFunction(() => window.__ed.t > window.__ed.startOf(1) + window.__ed.ovl(0) + 0.2, null, { timeout: 8000 }).then(() => true, () => false);
+  ok(passed, "воспроизведение проходит наплыв и идёт дальше" + (passed ? "" : " " + JSON.stringify(await ed(() => ({ t: window.__ed.t, playing: window.__ed.playing, s1: window.__ed.startOf(1), o: window.__ed.ovl(0), m: window.__ed.P.clips.map((c) => [c.media.slice(0, 4), c.in, c.out]) })))));
+  await ed(() => { window.__ed.pause(); window.__ed.P.clips[0].tr = { kind: "black", dur: 0.6 }; });
   await page.click(".panel-head >> text=Готово");
 
   // субтитры

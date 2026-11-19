@@ -118,7 +118,8 @@ def atempo(speed):
 
 
 def total_len(segs):
-    return sum(seg_len(s) for s in segs)
+    """the film's length: dissolves (xfade) overlap a take and the next one"""
+    return sum(seg_len(s) for s in segs) - sum(float(s.get("xfade") or 0) for s in segs[:-1])
 
 
 def noise_floor(wav):
@@ -225,7 +226,13 @@ def build_audio(project, out_wav):
                          f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE},volume={vol:.4f}[a{i}]")
         else:  # take without sound (screen recording, drone): silence of the same length
             parts.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{d:.6f},{fmt}[a{i}]")
-    fc = ";".join(parts) + ";" + "".join(f"[a{i}]" for i in range(len(segs))) + f"concat=n={len(segs)}:v=0:a=1[a]"
+    # takes joined one by one: a dissolve (xfade) crossfades the sound over its length, a plain cut just follows
+    chain = "[a0]"
+    for i in range(1, len(segs)):
+        x = float(segs[i - 1].get("xfade") or 0)
+        parts.append(f"{chain}[a{i}]" + (f"acrossfade=d={x:.6f}:c1=tri:c2=tri" if x > 0 else "concat=n=2:v=0:a=1") + f"[j{i}]")
+        chain = f"[j{i}]"
+    fc = ";".join(parts) + (f";{chain}anull[a]" if len(segs) > 1 else ";[a0]anull[a]")
     joined = Path(out_wav).with_suffix(".joined.wav")
     subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", fc, "-map", "[a]",
                     "-c:a", "pcm_f32le", "-ar", "48000", str(joined)], check=True)
@@ -310,7 +317,9 @@ def render(project, out, draft=False):
     wav, cube = work / "audio.wav", work / "grade.cube"
     build_audio(project, wav)
     G.write_cube(G.settings(project.get("grade")), cube)
-    total = sum(round(seg_len(s) * fps) for s in segs)
+    # dissolve: the last k frames of a take are blended with the first k of the next — the film is k frames shorter
+    xk = [round(float(s.get("xfade") or 0) * fps) if i < len(segs) - 1 else 0 for i, s in enumerate(segs)]
+    total = sum(round(seg_len(s) * fps) for s in segs) - sum(xk)
     vf = f"lut3d=file='{cube}':interp=tetrahedral,scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
     sub_in, vmap = [], ["-map", "0:v", "-vf", vf]
     layer = dict(project.get("subs") or {})
@@ -347,9 +356,11 @@ def render(project, out, draft=False):
     p = subprocess.Popen(enc, stdin=subprocess.PIPE)
     done, t_start = 0, time.time()
     prog = work / "progress.json"
+    tail = []   # processed last frames of the previous take, waiting for a dissolve (float16 to save memory)
     with ThreadPoolExecutor(3) as pool:
-        for seg in segs:
+        for si, seg in enumerate(segs):
             info = infos[seg["clip"]]
+            k_in, k_out = (xk[si - 1] if si else 0), xk[si]
             n = round(seg_len(seg) * fps)
             if seg.get("map"):   # speed curve: native source frames, picked along the curve
                 src = curve_frames(decode(clip_path(clips[seg["clip"]]), seg["in"], seg["out"] - seg["in"], info["w"], info["h"]),
@@ -362,15 +373,28 @@ def render(project, out, draft=False):
                     src = exactly(src, n)
             if draft:
                 src = (f[::2, ::2] for f in src)
-            pending = []
+            pending, j, new_tail = [], 0, []
+
+            def emit(img):
+                nonlocal_j = emit.j
+                emit.j += 1
+                if nonlocal_j < k_in and nonlocal_j < len(tail):   # dissolve in: mix with the previous take's tail
+                    w = (nonlocal_j + 0.5) / k_in
+                    img = tail[nonlocal_j].astype(np.float32) * (1 - w) + img * w
+                if k_out and nonlocal_j >= n - k_out:              # dissolve out: keep for the next take
+                    new_tail.append(img.astype(np.float16))
+                    return 0
+                return write(p, img)
+            emit.j = 0
             for frame in src:
                 pending.append(pool.submit(process, frame, project, seg, out_w, out_h, uv))
                 if len(pending) >= 6:
-                    done += write(p, pending.pop(0).result())
+                    done += emit(pending.pop(0).result())
                     if done % 50 == 0:  # progress inside a long segment too (one-take projects jumped 0 → 100 %)
                         prog.write_text(json.dumps({"done": done, "total": total, "elapsed": round(time.time() - t_start)}))
             for f in pending:
-                done += write(p, f.result())
+                done += emit(f.result())
+            tail = new_tail
             prog.write_text(json.dumps({"done": done, "total": total, "elapsed": round(time.time() - t_start)}))
     p.stdin.close()
     if p.wait() != 0:

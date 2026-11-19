@@ -1,4 +1,4 @@
-import { clipLen, outAt } from "./speed.mjs";
+import { clipLen, outAt, overlapAfter } from "./speed.mjs";
 // Субтитры: разбивка слов на строки и отрисовка. Один и тот же код рисует превью в приложении
 // и готовое видео на сборщике (worker/subs.mjs) — поэтому превью совпадает с итогом. Здесь нет ничего от браузера.
 export const FONTS = { Montserrat: "Montserrat_800ExtraBold.ttf", Inter: "Inter_800ExtraBold.ttf", Rubik: "Rubik_800ExtraBold.ttf", Oswald: "Oswald_600SemiBold.ttf", Caveat: "Caveat_700Bold.ttf" };
@@ -83,7 +83,7 @@ const show = (text, st) => { const s = st.punct ? text : text.replace(/[.,!?;:�
 export function buildLines(clips, words, style) {
   const st = normStyle(style), lines = [];
   let at = 0;
-  for (const c of clips) {
+  for (const [ci, c] of clips.entries()) {
     const len = clipLen(c), list = (words && words[c.media]) || [], from = lines.length;   // скорость клипа растягивает/сжимает речь
     let cur = null, chars = 0;
     const close = () => { if (cur) { lines.push(cur); cur = null; } };
@@ -102,8 +102,8 @@ export function buildLines(clips, words, style) {
       cur.words.push({ text, start: s, end: Math.max(e, s + 0.01), em: !!w.em, ...(w.ws ? { style: w.ws } : {}) }); cur.i1 = i; cur.end = Math.max(e, s + 0.01); chars += (chars ? 1 : 0) + text.length;
     });
     close();
-    at += len;
-    for (let k = from; k < lines.length; k++) lines[k].clipEnd = at;
+    for (let k = from; k < lines.length; k++) lines[k].clipEnd = at + len;
+    at += len - overlapAfter(clips, ci);   // наплыв: следующий клип начинается раньше
   }
   // слой и своё время строки (записаны у первого слова): layer — этаж на таймлайне, mv — сдвиг, ds/de — начало и конец
   lines.forEach((l) => { delete l.eff; l.layer = (l.style && l.style.layer) | 0; });
@@ -215,13 +215,13 @@ export function drawMaskCached(ctx, W, H, m, make) {
 }
 
 // Переходы на стыке клипов: закрывают кадр и открывают следующий (рисуются поверх видео, в общем слое).
-export const TRANSITIONS = [["none", "Нет"], ["black", "Затемнение"], ["white", "Вспышка"], ["wipe", "Шторка"], ["iris", "Круг"], ["blinds", "Жалюзи"], ["bars", "Кино-полосы"]];
+export const TRANSITIONS = [["none", "Нет"], ["dissolve", "Наплыв"], ["black", "Затемнение"], ["white", "Вспышка"], ["wipe", "Шторка"], ["iris", "Круг"], ["blinds", "Жалюзи"], ["bars", "Кино-полосы"]];
 // list: [{ at — секунда стыка, kind, dur }]
 export function drawTransitions(ctx, W, H, t, list) {
   let any = false;
   for (const x of list || []) {
     const d = Math.max(0.05, x.dur || 0.5), p = (t - (x.at - d / 2)) / d;
-    if (p <= 0 || p >= 1 || !x.kind || x.kind === "none") continue;
+    if (p <= 0 || p >= 1 || !x.kind || x.kind === "none" || x.kind === "dissolve") continue;   // наплыв — смешение самих клипов, не рисунок
     const c0 = 1 - Math.abs(2 * p - 1), c = c0 * c0 * (3 - 2 * c0);   // 0 → 1 (стык) → 0
     ctx.save();
     ctx.fillStyle = x.kind === "white" ? "#ffffff" : x.color || "#000000";

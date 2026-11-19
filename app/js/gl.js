@@ -19,6 +19,9 @@ void main(){
   if (s.x<0.||s.y<0.||s.x>1.||s.y>1.) gl_FragColor = vec4(0.,0.,0.,1.);
   else gl_FragColor = vec4(texture2D(tex, s).rgb, 1.);
 }`;
+// наплыв: смешать два кадра (уже поставленных в кадр) — w от 0 (первый) до 1 (второй)
+const FS_MIX = `precision highp float; varying vec2 v; uniform sampler2D tex, tex2; uniform float w;
+void main(){ gl_FragColor = vec4(mix(texture2D(tex, v).rgb, texture2D(tex2, v).rgb, w), 1.); }`;
 const FS_DOWN = `precision highp float; varying vec2 v; uniform sampler2D tex; uniform vec2 px;
 void main(){ vec3 a = vec3(0.);
   for(int i=0;i<4;i++) for(int j=0;j<4;j++) a += texture2D(tex, v + (vec2(float(i),float(j))-1.5)*2.*px).rgb;
@@ -101,7 +104,7 @@ export function createRenderer(canvas) {
     const u = {};
     return { p, u: (n) => u[n] ??= gl.getUniformLocation(p, n) };
   };
-  const P = { frame: prog(FS_FRAME), down: prog(FS_DOWN), blur: prog(FS_BLUR), grade: prog(FS_GRADE) };
+  const P = { frame: prog(FS_FRAME), mix: prog(FS_MIX), down: prog(FS_DOWN), blur: prog(FS_BLUR), grade: prog(FS_GRADE) };
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -117,7 +120,8 @@ export function createRenderer(canvas) {
     gl.bindTexture(gl.TEXTURE_2D, o.t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, o.f); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, o.t, 0);
   };
-  const src = tex(), A = target(), B = target(), C = target();
+  const src = tex(), src2 = tex(), A = target(), B = target(), C = target(), D = target(), E = target();
+  let last2 = null, lastFrame2 = null;
   let last = null, lastFrame = null, fr0 = null;
   const small = document.createElement("canvas"), sg = small.getContext("2d", { alpha: false });
   const pass = (pr, to, w, h, input, set) => {
@@ -129,7 +133,8 @@ export function createRenderer(canvas) {
     // video: источник (или null — чёрный кадр); out: размер итогового кадра; fr: кадр клипа; g: цвет
     // frame — номер кадра видео (если браузер его сообщает): тот же кадр второй раз в видеокарту не грузим —
     // для 4K это самое дорогое место превью
-    draw(video, sw, sh, out, fr, g, frame) {
+    // mix — наплыв: { video, sw, sh, fr, frame, w } второго клипа, w — доля второго (0…1)
+    draw(video, sw, sh, out, fr, g, frame, mix) {
       const W = canvas.width, H = canvas.height;
       if (!video || !sw) { last = null; gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
       gl.bindTexture(gl.TEXTURE_2D, src);
@@ -149,22 +154,39 @@ export function createRenderer(canvas) {
         if (window.__perfG) { gl.finish(); window.__perfG.push(performance.now() - u0); }
         last = video; lastFrame = frame;
       }
-      fr = { ...FRAME_DEFAULT, ...fr }; g = { ...GRADE_DEFAULT, ...g };
+      g = { ...GRADE_DEFAULT, ...g };
       size(A, W, H);
-      const th = -fr.rot * Math.PI / 180;
-      pass(P.frame, A, W, H, src, (p) => {
-        gl.uniform2f(p.u("uOut"), out.w, out.h); gl.uniform2f(p.u("uSrc"), sw, sh);
-        gl.uniform2f(p.u("uOff"), fr.x * out.w, fr.y * out.h); gl.uniform2f(p.u("uC"), Math.cos(th), Math.sin(th));
-        gl.uniform1f(p.u("uS"), Math.max(out.w / sw, out.h / sh) * (fr.scale || 1));
-      });
+      const framePass = (to, from, f, w0, h0) => {
+        f = { ...FRAME_DEFAULT, ...f }; const th = -f.rot * Math.PI / 180;
+        pass(P.frame, to, W, H, from, (p) => {
+          gl.uniform2f(p.u("uOut"), out.w, out.h); gl.uniform2f(p.u("uSrc"), w0, h0);
+          gl.uniform2f(p.u("uOff"), f.x * out.w, f.y * out.h); gl.uniform2f(p.u("uC"), Math.cos(th), Math.sin(th));
+          gl.uniform1f(p.u("uS"), Math.max(out.w / w0, out.h / h0) * (f.scale || 1));
+        });
+      };
+      framePass(A, src, fr, sw, sh);
+      let base = A;
+      if (mix && mix.video && mix.sw) {   // наплыв: второй клип в своём кадре, потом смесь
+        gl.bindTexture(gl.TEXTURE_2D, src2);
+        let ok = true;
+        if (mix.frame == null || last2 !== mix.video || lastFrame2 !== mix.frame) {
+          try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mix.video); last2 = mix.video; lastFrame2 = mix.frame; } catch { ok = false; }
+        }
+        if (ok) {
+          size(D, W, H); size(E, W, H);
+          framePass(D, src2, mix.fr, mix.sw, mix.sh);
+          pass(P.mix, E, W, H, A.t, (p) => { gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, D.t); gl.uniform1i(p.u("tex2"), 1); gl.uniform1f(p.u("w"), Math.min(1, Math.max(0, mix.w))); gl.activeTexture(gl.TEXTURE0); });
+          base = E;
+        }
+      }
       if (g.clarity || g.skin_smooth) {
         const w8 = Math.max(1, W >> 3), h8 = Math.max(1, H >> 3), sigma = Math.max(0.5, 0.012 * H / 8);
         size(B, w8, h8); size(C, w8, h8);
-        pass(P.down, B, w8, h8, A.t, (p) => gl.uniform2f(p.u("px"), 1 / W, 1 / H));
+        pass(P.down, B, w8, h8, base.t, (p) => gl.uniform2f(p.u("px"), 1 / W, 1 / H));
         pass(P.blur, C, w8, h8, B.t, (p) => { gl.uniform2f(p.u("dir"), 1 / w8, 0); gl.uniform1f(p.u("sigma"), sigma); });
         pass(P.blur, B, w8, h8, C.t, (p) => { gl.uniform2f(p.u("dir"), 0, 1 / h8); gl.uniform1f(p.u("sigma"), sigma); });
       }
-      pass(P.grade, null, W, H, A.t, (p) => {
+      pass(P.grade, null, W, H, base.t, (p) => {
         gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, B.t); gl.uniform1i(p.u("blur"), 1);
         gl.uniform1fv(p.u("g[0]"), KEYS.map((k) => +g[k] || 0));
         const hs = HSL_BANDS.flatMap((b) => (g.hsl && g.hsl[b]) || [0, 0, 0]);
