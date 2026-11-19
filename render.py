@@ -309,22 +309,38 @@ def key_frame(keys, t):
 
 
 def fx_frame(fx, t):
-    """«Тряска» and «Наезд-рывок» (app/js/effects.mjs fxFrame): scale factor, x/y shift (frame parts), rotation (degrees)"""
+    """moving effects (app/js/effects.mjs fxFrame — same formulas): scale factor, x/y shift (frame parts), rotation (degrees)"""
     s, x, y, r = 1.0, 0.0, 0.0, 0.0
     ss = lambda u: (lambda v: v * v * (3 - 2 * v))(min(1.0, max(0.0, u)))
+    hs = lambda n: (lambda v: v - math.floor(v))(math.sin(n * 127.1 + 311.7) * 43758.5453)
+    w = 2 * math.pi
     for f in fx or []:
         if not (f["start"] <= t < f["end"]):
             continue
-        a, u = float(f.get("amount", 1)), (t - f["start"]) / max(0.05, f["end"] - f["start"])
-        if f["kind"] == "shake":
-            e = min(1.0, max(0.0, min(1.0, (t - f["start"]) / 0.12, (f["end"] - t) / 0.12))) * a
-            w = 2 * math.pi
+        a, u, k = float(f.get("amount", 1)), (t - f["start"]) / max(0.05, f["end"] - f["start"]), f["kind"]
+        edge = lambda d: min(1.0, max(0.0, min((t - f["start"]) / d, (f["end"] - t) / d)))
+        if k == "shake":
+            e = edge(0.12) * a
             x += e * 0.022 * (math.sin(w * 7.3 * t) + 0.5 * math.sin(w * 13.1 * t + 1.3))
             y += e * 0.016 * (math.sin(w * 6.1 * t + 0.4) + 0.5 * math.sin(w * 11.7 * t + 2.1))
             r += e * 1.2 * math.sin(w * 4.3 * t + 0.7)
             s *= 1 + 0.07 * e
-        elif f["kind"] == "zoom":
+        elif k == "zoom":
             s *= 1 + 0.18 * a * (ss(u / 0.2) if u < 0.2 else 1 - ss((u - 0.2) / 0.8))
+        elif k == "kin":
+            s *= 1 + 0.15 * a * ss(u)
+        elif k == "kout":
+            s *= 1 + 0.15 * a * (1 - ss(u))
+        elif k == "pulse":
+            s *= 1 + 0.06 * a * abs(math.cos(math.pi * 2 * (t - f["start"]))) ** 6
+        elif k == "sway":
+            e = edge(0.4) * a
+            r += 2.5 * e * math.sin(w * 0.5 * (t - f["start"]))
+            s *= 1 + 0.07 * e
+        elif k == "vhs":
+            fr, e = math.floor(t * 15), edge(0.15) * a
+            x += e * (0.006 * (hs(fr) - 0.5) + (0.03 * (hs(fr + 0.3) - 0.5) if hs(fr + 0.5) > 0.93 else 0))
+            s *= 1 + 0.02 * e
     return s, x, y, r
 
 

@@ -341,3 +341,5 @@ textarea.txt { font-size: 17px; }
 /* «Копия» в шапке панели у выбранного текста, наложения, звука, облака, эффекта */
 .panel-head .copy-obj { display: inline-flex; align-items: center; gap: 4px; }
 .view canvas.blend[hidden] { display: none; }
+.tiles.anim.fx-tiles { grid-template-columns: repeat(4, 1fr); }
+.tiles.anim.fx-tiles button { font-size: 11px; }

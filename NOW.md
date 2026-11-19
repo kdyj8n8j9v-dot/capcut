@@ -19,7 +19,7 @@
   Пресеты цвета `app/js/looks.js` (`P.look`), избранное и «Мои» (свои настройки любой вкладки, `settings.my`, `mine`/`myFor`) — `app/js/fav.js`.
 - Мост с чатом «Монтаж» (только по команде владельца; файлы чата приложение не удаляет): «.studio/from-chat», «…/projects», `sync.js`.
 - Проверено: export/prepare владельцем (11-11); selftest ok (11-19). Владельцем НЕ проверено: большие файлы с устройства, звук и касания на iPad, свои шрифты, мост с чатом.
-- Эффекты и смешивание (11-19, `app/js/effects.mjs`): `P.effects` (дорожка `.tl-fx`), тряска/наезд двигают кадр (`withFx`, render.py `fx_frame`);
+- Эффекты (11-19, `app/js/effects.mjs`, 21 шт., живые плитки `fxTiles`/`drawDemo` на кадре видео): `P.effects` (`.tl-fx`), движение кадра — `withFx`, render.py `fx_frame`;
   смешивание наложений `o.blend` и «Блик» — холст на режим с нейтральной заливкой: превью CSS mix-blend-mode, сборщик ffmpeg `blend` в RGB.
   Громкость клипа `clip.volume`/`mute` (`cvol`, render.py — на отрезок). Тесты: `ONLY=iphone` — одно устройство.
 - Наплыв: `tr.kind "dissolve"`, клипы перекрываются (`overlapAfter`/`clipStarts`); превью — `vid2` + `mix` в WebGL; сборщик — `xfade`.

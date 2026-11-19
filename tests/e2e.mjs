@@ -483,7 +483,13 @@ async function run(label, viewport, scale) {
   // эффекты: касание — эффект здесь; вспышка белит кадр, тряска двигает кадр, всё уходит сборщику
   await page.click('.panel-head >> text=Готово');
   await ed(() => { window.__ed.pause(); window.__ed.seek(1); });
-  await tool("fx");
+  await tool("fx"); await page.waitForTimeout(400);
+  const demo = await page.evaluate(() => { const cs = [...document.querySelectorAll(".fx-tiles canvas")], px = (c) => [...c.getContext("2d").getImageData(0, 0, c.width, c.height).data].reduce((a, v) => a + v, 0);
+    const v = cs.find((c) => c.closest("[data-fx=vhs]")), a = px(v); return { n: cs.length, a }; });
+  await page.waitForTimeout(300);
+  const demo2 = await page.evaluate(() => { const c = document.querySelector(".fx-tiles [data-fx=vhs] canvas"); return [...c.getContext("2d").getImageData(0, 0, c.width, c.height).data].reduce((a, v) => a + v, 0); });
+  ok(demo.n >= 22 && demo.a > 0 && demo2 !== demo.a, `на плитках эффектов живые образцы (${demo.n} плиток, играют)`);
+  await shot("7m0-fxlist");
   await page.click('.fx-tiles [data-fx="flash"]');
   await page.waitForFunction(() => window.__ed.P.effects.length === 1 && document.querySelector(".fx.sel"));
   await ed(() => window.__ed.pause());

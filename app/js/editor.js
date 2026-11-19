@@ -8,7 +8,7 @@ import { buildLines, drawSubs, drawClouds, drawMaskCached, drawTransitions, TRAN
 import { useFont } from "./fonts.js";
 import { subsPanel, openLine, openSubsTab, colorPicker } from "./subsui.js";
 import { cloud } from "./cloud.js";
-import { EFFECTS, FX_LEN, fxName, BLENDS, blendOf, blendGroups, drawBlend, drawEffects, withFx } from "./effects.mjs";
+import { EFFECTS, FX_LEN, fxName, BLENDS, blendOf, blendGroups, drawBlend, drawEffects, withFx, drawDemo, fxDemoLen } from "./effects.mjs";
 import { openLibrary, openOverlayPicker, openSoundPicker } from "./library.js";
 import { openExport, buildJob } from "./export.js";
 import { LOOKS, scaleLook } from "./looks.js";
@@ -1276,6 +1276,34 @@ export async function openEditor(P, onExit) {
     trSel = P.clips[i].id; pause(); seek(Math.max(0, startOf(i + 1) - 0.6));
     panel = panel === "transition" ? null : "transition"; renderPanel(); syncBar(); layout(); requestAnimationFrame(fit);
   }
+  // плитки эффектов: на каждой эффект сам играет на кадре этого видео (как плитки анимаций у субтитров)
+  function fxTiles(list, cur, pick) {
+    const o = out(), W = 120, H = Math.round(W * Math.min(1.25, o.h / o.w));
+    const bg = newCv(240, Math.max(2, Math.round(240 * o.h / o.w))), bx = bg.getContext("2d");
+    const gr = bx.createLinearGradient(0, 0, bg.width, bg.height); gr.addColorStop(0, "#3a6ea5"); gr.addColorStop(1, "#c86b3c");
+    bx.fillStyle = gr; bx.fillRect(0, 0, bg.width, bg.height);
+    if (P.clips.length) { draw(); try { bx.drawImage(canvas, 0, 0, bg.width, bg.height); } catch {} }   // кадр под линией (сразу после рисования)
+    const cvs = [], t0 = performance.now();
+    const box = h("div.tiles.anim.fx-tiles", {}, list.map(([k, n]) => {
+      const cv = h("canvas", { width: W, height: H }); cvs.push([cv, k]);
+      return h("button" + (cur === k ? ".on" : ""), { "data-fx": k, "aria-label": n, onclick: () => pick(k) }, cv, h("span", {}, n));
+    }));
+    const cloud0 = [{ ...CLOUD_DEFAULT, start: 0, end: 1e9, y: 0.72 }];
+    let odd = false;
+    const frame = (now) => {
+      if (!box.isConnected && now - t0 > 800) return;
+      requestAnimationFrame(frame);
+      if ((odd = !odd) || !box.isConnected) return;
+      const sec = (now - t0) / 1000;
+      for (const [cv, k] of cvs) {
+        const c = cv.getContext("2d");
+        if (k === "cloud") { c.drawImage(bg, 0, (bg.height - bg.width * H / W) / 2, bg.width, bg.width * H / W, 0, 0, W, H); drawClouds(c, W, H, 1, cloud0); }
+        else drawDemo(c, W, H, bg, k, sec % fxDemoLen(k), newCv);
+      }
+    };
+    requestAnimationFrame(frame);
+    return box;
+  }
   function pickOverlay() { pause(); openOverlayPicker({ onImage: addOverlayImage, onVideo: addOverlayVideo }); }
   // «Копия» выбранного текста, наложения, звука, облака, эффекта: встаёт сразу после него (или на свободный ряд)
   function copyObj() {
@@ -1540,14 +1568,14 @@ export async function openEditor(P, onExit) {
       const all = [...EFFECTS, ["cloud", "Облако"]];
       if (!f) return side.replaceChildren(head("Эффекты"),
         h("p.hint", {}, "Нажмите — эффект встанет с места линии и сразу покажется. На дорожке его можно двигать и растягивать за края."),
-        h("div.tiles.fx-tiles", {}, all.map(([k, n]) => h("button", { "data-fx": k, onclick: () => (k === "cloud" ? addCloud() : addFx(k)) }, n))),
+        fxTiles(all, null, (k) => (k === "cloud" ? addCloud() : addFx(k))),
         h("p.hint", {}, "Облако — мягкое затемнение под текстом, чтобы он читался на любом фоне."));
       const ch = (fn) => { begin(); fn(); layoutFx(); draw(); renderPanel(); save(); };
       side.replaceChildren(head(fxName(f.kind)),
         h("div.sliders", {}, slider("Сила", () => f.amount ?? 1, (v) => { f.amount = v; }, { min: 0.1, max: 1.5, def: 1, show: (v) => Math.round(v * 100) + " %" })),
         h("button.btn.wide", { onclick: () => { const s0 = f.start; pause(); seek(Math.max(0, s0 - 0.3)); stopAt = f.end + 0.2; play(); } }, icon("play", 16), "Посмотреть"),
         h("div.sl-top", {}, "Заменить на"),
-        h("div.tiles.fx-tiles", {}, EFFECTS.map(([k, n]) => h("button" + (f.kind === k ? ".on" : ""), { "data-fx": k, onclick: () => ch(() => { f.kind = k; }) }, n))));
+        fxTiles(EFFECTS, f.kind, (k) => ch(() => { f.kind = k; })));
     } else if (panel === "cvol") {
       const c = target(); shown = c?.id;
       if (!c) return side.replaceChildren(head("Громкость"), h("p.muted", {}, "Добавьте видео."));

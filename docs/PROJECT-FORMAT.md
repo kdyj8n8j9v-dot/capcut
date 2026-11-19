@@ -75,7 +75,7 @@ overlays: [ { id, kind: "image"|"video", image?|media?, from? (видео: се�
               x, y (центр, доли кадра), scale (ширина в долях кадра), rot, opacity, radius, flip,
               in, inDur, out, outDur, loop, mask?, keys?, blend? } ]   варианты анимаций — OV_IN / OV_OUT / OV_LOOP в app/js/overlays.mjs;
               blend — режим смешивания (screen, add, lighten, multiply, darken, overlay, difference; BLENDS в app/js/effects.mjs)
-effects:  [ { id, kind, start, end, amount } ]   эффекты: flash, out, in, vignette, grain, leak, bars, shake, zoom (EFFECTS в app/js/effects.mjs)
+effects:  [ { id, kind, start, end, amount } ]   эффекты (flash, strobe, kin, vhs, old, snow… — EFFECTS в app/js/effects.mjs)
 texts:    [ { id, text (\n — новая строка), start, end, layer, style } ]   титры; style — как у субтитров (SUB_DEFAULT, TEXT_DEFAULT)
 sounds:   [ { id, audio: <ключ>, from, start, end, layer, volume, fadeIn, fadeOut, duck } ]   музыка и звуки
 audios:   { <ключ>: { name, dur, path } }           path — файл в MEGA, как у картинок
