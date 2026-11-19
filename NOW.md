@@ -2,9 +2,8 @@
 Коротко, до 30 строк. Обновлять в конце каждой большой задачи и коммитить.
 - План и решения владельца — `docs/STUDIO-PLAN.md`. Репозиторий публичный: имена роликов и текст речи в журнал Actions не писать.
 - Приложение `app/` (чистые модули JS, MEGA — `app/vendor/mega.mjs`). Формат проекта — `docs/PROJECT-FORMAT.md`.
-- Автопроверка: `bash tests/run.sh` (Chromium, `tests/fake.js`, iPad и iPhone; кнопки — `tool(id)`). Плавность: `node tests/realplay.mjs копия.mp4` (через интерфейс; H.264 1080×1920 с полосой-счётчиком кадров, см. файл). Лист анимаций: `node tests/sheet.mjs`.
-- Экспорт: проект → MEGA «/10 бит/.studio/jobs/<номер>.json», в GitHub — только номер; имена файлов — «#<sha256>» (`worker/find.py`).
-  `job=export req=selftest` — проверка сборки. Программы сборщика — из кэша GitHub (`~/tools`). «В MEGA / На устройство / Туда и туда».
+- Автопроверка: `bash tests/run.sh` (Chromium, `tests/fake.js`, iPad и iPhone). Плавность: `node tests/realplay.mjs копия.mp4`. Анимации: `node tests/sheet.mjs`.
+- Экспорт: проект → MEGA «/10 бит/.studio/jobs/<номер>.json», в GitHub — номер, файлы — «#<sha256>». `req=selftest` — проверка сборки. Программы сборщика — из кэша GitHub (`~/tools`). «В MEGA / На устройство / Туда и туда».
 - Один код рисования для превью и сборщика (`worker/subs.mjs`): `app/js/subs.mjs` (субтитры, титры `P.texts`, облака, маски,
   переходы `clip.tr`, кривые движения `inEase`/`outEase`), `app/js/overlays.mjs` (`P.overlays`, картинки `P.images`).
   Панель субтитров `app/js/subsui.js`, шрифты из ПАК (`fonts.js`), строки/слово (`ls`, `ws`), слои (`ls.layer`).
