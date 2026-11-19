@@ -15,6 +15,7 @@ import { favStar, favSort, easePicker, mine } from "./fav.js";
 import { CURVES, clipLen, srcAt, outAt, rateAt, splitCurve, speedAt, VMIN, VMAX, overlapAfter, clipStarts } from "./speed.mjs";
 import { pushProject, remoteNewer } from "./sync.js";
 import { openFast, Stream } from "./fastplay.mjs";
+import { frameAt, keyAt, addKey, splitKeys } from "./keys.mjs";
 
 export const FORMATS = {
   "9:16": { w: 2160, h: 3840, label: "Вертикальное", hint: "Reels, Shorts, TikTok" },
@@ -330,9 +331,9 @@ export async function openEditor(P, onExit) {
     const fz = !rec || !rec.ok ? null : playing ? (fastOn(rec) ? rec.stream?.cur : null) : rec.v.seeking ? rec.hold : null;
     // наплыв: второй клип смешивается с первым (его видео играет одновременно)
     const mx = loc && mixAt(t), eb = mx && mx.i === loc.i ? mixEl(mx) : null;
-    const mix = eb && eb.ok ? { video: eb.v, sw: eb.w, sh: eb.h, fr: mx.b.frame, frame: playing && eb.v.__mt != null ? eb.v.__f : null, w: mx.w } : null;
-    if (fz) R.draw(fz.canvas, rec.w, rec.h, out(), loc.clip.frame, gradeOf(loc.clip), fz.timestamp, mix);
-    else if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, gradeOf(loc.clip), playing && rec.rvfc ? rec.v.__f : null, mix);
+    const mix = eb && eb.ok ? { video: eb.v, sw: eb.w, sh: eb.h, fr: frameAt(mx.b, mx.localB), frame: playing && eb.v.__mt != null ? eb.v.__f : null, w: mx.w } : null;
+    if (fz) R.draw(fz.canvas, rec.w, rec.h, out(), frameAt(loc.clip, loc.local), gradeOf(loc.clip), fz.timestamp, mix);
+    else if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), frameAt(loc.clip, loc.local), gradeOf(loc.clip), playing && rec.rvfc ? rec.v.__f : null, mix);
     else R.draw(null);
     const a1 = q();
     const c2 = over.getContext("2d");
@@ -370,6 +371,7 @@ export async function openEditor(P, onExit) {
     draw();
     if (!playing) prime();
     if ((panel === "frame" || panel === "mask" || panel === "speed") && loc?.clip.id !== shown && !ptrs.size && !sel) renderPanel();
+    else if (panel === "frame" && !playing && !ptrs.size) renderPanel();   // кнопки ключей и ползунки — для места линии   // ключи: ползунки — вид кадра в этом месте
     if (panel === "speed" && curveHook && side.querySelector("canvas.curve")) curveHook();
   }
   // скорость видео меняем, только если она заметно другая: частые смены на iPad останавливают картинку и звук
@@ -1065,6 +1067,7 @@ export async function openEditor(P, onExit) {
     track.replaceChildren(...P.clips.map((c) => {
       const el = h("div.clip" + (c.id === sel ? ".sel" : "") + (vids.has(c.media) ? "" : ".missing"), { "data-id": c.id, style: { width: len(c) * pps + "px", marginRight: -ovl(P.clips.indexOf(c)) * pps + "px" } },
         h("canvas"), h("span.clip-len", {}, fmtTime(len(c), true)), c.grade ? h("span.clip-cc", { title: "Свой цвет" }, "◐") : null,
+        ...(c.keys || []).map((k) => h("i.kf", { style: { left: clamp(outAt(c, k.src), 0, len(c)) * pps + "px" } })),
         vids.has(c.media) ? null : h("span.clip-note", {}, "нет копии на устройстве"),
         h("div.grip.l", { "data-side": "l" }), h("div.grip.r", { "data-side": "r" }));
       paint(el, c);
@@ -1232,6 +1235,7 @@ export async function openEditor(P, onExit) {
     const c = loc.clip, cut = srcAt(c, loc.local);
     const b = { ...c, id: uid(), in: cut, frame: c.frame && { ...c.frame }, ...(c.grade ? { grade: JSON.parse(JSON.stringify(c.grade)) } : {}), ...(c.mask ? { mask: { ...c.mask } } : {}) };
     if (c.curve) { const [ca, cb] = splitCurve(c.curve, (cut - c.in) / (c.out - c.in)); c.curve = ca; b.curve = cb; }   // кривая делится вместе с клипом
+    splitKeys(c, b, cut);
     c.out = cut; delete c.tr;   // стык справа (и его переход) теперь у правой половины
     P.clips.splice(loc.i + 1, 0, b);
     sel = b.id; layout(); seek(t); save();
@@ -1333,17 +1337,31 @@ export async function openEditor(P, onExit) {
     if (panel === "frame") {
       const c = target(); shown = c?.id;
       if (!c) return side.replaceChildren(head("Кадр"), h("p.muted", {}, "Добавьте видео."));
-      const fr = () => (c.frame ||= { ...FRAME_DEFAULT });
+      // ключевые кадры: если у клипа есть ключи, правка в этом месте ставит (или меняет) ключ здесь — как в CapCut
+      const ci = P.clips.indexOf(c), L = () => clamp(t - startOf(ci), 0, len(c)), keyed = !!(c.keys && c.keys.length);   // место линии — в момент действия
+      const fr = () => { if (!keyed) return (c.frame ||= { ...FRAME_DEFAULT }); const had = keyAt(c, L()), k = addKey(c, L()); if (!had) layout(); return k; };   // что правим (новый ключ — сразу ◆ на клипе)
+      const now = () => frameAt(c, L());                                               // что видно сейчас
       const m = P.media[c.media] || { w: 16, h: 9 }, o = out();
       const fitScale = Math.min(o.w / m.w, o.h / m.h) / Math.max(o.w / m.w, o.h / m.h);
-      const setScale = (s) => { begin(); Object.assign(fr(), { scale: s, x: 0, y: 0 }); renderPanel(); draw(); save(); };
-      side.replaceChildren(head("Кадр", () => { begin(); c.frame = { ...FRAME_DEFAULT }; renderPanel(); draw(); save(); }),
+      const setScale = (s) => { begin(); Object.assign(fr(), { scale: s, x: 0, y: 0 }); layout(); renderPanel(); draw(); save(); };
+      const here = keyAt(c, L()), K = (c.keys || []).map((k) => startOf(ci) + clamp(outAt(c, k.src), 0, len(c)));
+      const go = (x) => { pause(); seek(x + 0.001); renderPanel(); };
+      const prevK = [...K].reverse().find((x) => x < t - 0.03), nextK = K.find((x) => x > t + 0.03);
+      const keyRow = h("div.keys", {},
+        h("button.btn.sm" + (here ? ".primary" : ""), { "data-key": "add", onclick: () => { if (here) return; begin(); if (!keyed) c.frame ||= { ...FRAME_DEFAULT }; addKey(c, L()); layout(); renderPanel(); save(); } }, "◆ ", here ? "Ключ здесь" : "Ключ"),
+        h("button.btn.sm", { "data-key": "del", disabled: !here, onclick: () => { begin(); c.keys = c.keys.filter((k) => k !== here); if (!c.keys.length) delete c.keys; layout(); renderPanel(); draw(); save(); } }, "Убрать ключ"),
+        h("button.round.sm", { disabled: prevK == null, "aria-label": "Предыдущий ключ", onclick: () => go(prevK) }, "◀"),
+        h("button.round.sm", { disabled: nextK == null, "aria-label": "Следующий ключ", onclick: () => go(nextK) }, "▶"));
+      side.replaceChildren(head("Кадр", () => { begin(); c.frame = { ...FRAME_DEFAULT }; delete c.keys; layout(); renderPanel(); draw(); save(); }),
         h("p.hint", {}, "Двигайте видео пальцем прямо на экране, двумя пальцами — меняйте размер."),
         h("div.seg", {}, h("button", { onclick: () => setScale(1) }, "Заполнить кадр"), h("button", { onclick: () => setScale(fitScale) }, "Показать целиком")),
-        slider("Размер", () => fr().scale, (v) => fr().scale = v, { min: 0.2, max: 4, def: 1 }),
-        slider("Влево — вправо", () => fr().x, (v) => fr().x = v),
-        slider("Вверх — вниз", () => fr().y, (v) => fr().y = v),
-        slider("Поворот", () => fr().rot, (v) => fr().rot = v, { min: -180, max: 180, step: 0.5, show: (v) => Math.round(v) + "°" }));
+        slider("Размер", () => now().scale, (v) => fr().scale = v, { min: 0.2, max: 4, def: 1 }),
+        slider("Влево — вправо", () => now().x, (v) => fr().x = v),
+        slider("Вверх — вниз", () => now().y, (v) => fr().y = v),
+        slider("Поворот", () => now().rot, (v) => fr().rot = v, { min: -180, max: 180, step: 0.5, show: (v) => Math.round(v) + "°" }),
+        h("div.sl-top.strong", {}, "Ключевые кадры"), keyRow,
+        h("p.hint", {}, keyed ? "Между ключами кадр плавно движется. Поставьте линию в другое место и поменяйте кадр — там появится новый ключ (◆ на клипе)."
+          : "Чтобы кадр двигался (наезд, отъезд, панорама): нажмите «◆ Ключ», переставьте линию и поменяйте размер или положение."));
     } else if (panel === "color") {
       // что красим: весь ролик (P.grade) или только этот клип (clip.grade — появляется при первой правке)
       const cc = target(), own = colorScope === 1 && cc, S = own ? cc : P;
@@ -1687,7 +1705,7 @@ export async function openEditor(P, onExit) {
     canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e);
     if (mode === "frame" && ptrs.size === 1) begin();
     const ps = [...ptrs.values()], d = ps[1] ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) : 0;
-    if (mode === "frame") g0 = { mode, c, fr: { ...(c.frame ||= { ...FRAME_DEFAULT }) }, x: ps[0].clientX, y: ps[0].clientY, d };
+    if (mode === "frame") { const lc = clamp(t - startOf(P.clips.indexOf(c)), 0, len(c)), obj = c.keys?.length ? addKey(c, lc) : (c.frame ||= { ...FRAME_DEFAULT }); g0 = { mode, c, obj, fr: { ...frameAt(c, lc) }, x: ps[0].clientX, y: ps[0].clientY, d }; }
     else if (mode === "txt") { const st = normStyle({ ...TEXT_DEFAULT, ...tx.style }); g0 = { mode, x: tx, s0: { x: st.x, y: st.y, size: st.size }, px: ps[0].clientX, py: ps[0].clientY, x0: ps[0].clientX, y0: ps[0].clientY, d, moved: g0?.moved || false }; g0.x = ps[0].clientX; g0.y = ps[0].clientY; g0.tx = tx; }
     else if (mode === "ov") { const a = ps[1] ? Math.atan2(ps[1].clientY - ps[0].clientY, ps[1].clientX - ps[0].clientX) : 0; g0 = { mode, o: ov, s0: { x: ov.x ?? 0.5, y: ov.y ?? 0.5, scale: ov.scale ?? OV_DEFAULT.scale, rot: ov.rot || 0 }, a, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false }; }
     else if (mode === "mask") g0 = { mode: "cloud", cl: mk, s0: { x: mk.x ?? 0.5, y: mk.y ?? 0.5, w: mk.w ?? MASK_DEFAULT.w, h: mk.h ?? MASK_DEFAULT.h }, x: ps[0].clientX, y: ps[0].clientY, d, moved: g0?.moved || false };
@@ -1700,7 +1718,7 @@ export async function openEditor(P, onExit) {
     const ps = [...ptrs.values()], r = canvas.getBoundingClientRect(), k = ps.length >= 2 && g0.d ? Math.hypot(ps[0].clientX - ps[1].clientX, ps[0].clientY - ps[1].clientY) / g0.d : 0;
     const dx = (ps[0].clientX - g0.x) / r.width, dy = (ps[0].clientY - g0.y) / r.height;
     if (g0.mode === "frame") {
-      const fr = g0.c.frame;
+      const fr = g0.obj;
       if (k) fr.scale = clamp(g0.fr.scale * k, 0.2, 4); else { fr.x = clamp(g0.fr.x + dx, -1, 1); fr.y = clamp(g0.fr.y + dy, -1, 1); }
     } else if (g0.mode === "txt") {
       if (!g0.moved) { if (!k && Math.hypot(dx * r.width, dy * r.height) < 5) return; g0.moved = true; pause(); begin(); }
@@ -1784,5 +1802,5 @@ export async function openEditor(P, onExit) {
   if (P.clips.length) pps = clamp((scroll.clientWidth * 0.8) / Math.max(1, total()), 3, 240);
   await loadAll();
   // для автопроверок
-  window.__ed = { P, seek, srcAt, ovl, mixAt, startOf, job: () => buildJob(P, out(), "test"), rateAt, pause, recOf: (k) => vids.get(k), quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
+  window.__ed = { P, seek, srcAt, frameAt, ovl, mixAt, startOf, job: () => buildJob(P, out(), "test"), rateAt, pause, recOf: (k) => vids.get(k), quickEdit, trList, addText, get txtSel() { return txtSel; }, addSound, get sndSel() { return sndSel; }, get sndEls() { return sndEls; }, addOverlayImage, addOverlayVideo, get ovSel() { return ovSel; }, checkRemote, push, get cloudSel() { return cloudSel; }, get lines() { return lines; }, subApi, get t() { return t; }, get playing() { return playing; }, total, get sel() { return sel; }, get panel() { return panel; } };
 }

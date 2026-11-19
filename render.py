@@ -293,11 +293,26 @@ def output_size(project, info):
     return 2160, 3840  # landscape source → 9:16 at 4K height
 
 
-def process(frame, project, seg, out_w, out_h, uv, own=False):
+def key_frame(keys, t):
+    """keyframes of the take's frame (app/js/keys.mjs): [[seconds from the take's start, scale, x, y, rot], …], smoothstep between"""
+    names = ("scale", "x", "y", "rot")
+    if t <= keys[0][0]:
+        return dict(zip(names, keys[0][1:]))
+    for a, b in zip(keys, keys[1:]):
+        if t <= b[0]:
+            u = (t - a[0]) / max(1e-6, b[0] - a[0])
+            e = u * u * (3 - 2 * u)
+            return {n: a[i + 1] + (b[i + 1] - a[i + 1]) * e for i, n in enumerate(names)}
+    return dict(zip(names, keys[-1][1:]))
+
+
+def process(frame, project, seg, out_w, out_h, uv, own=False, t=0.0):
     """Frame → detail → vignette (here); the colour steps run in the encoder as the baked LUT.
     own: some take has its own colour (seg["grade"]) — then the colour steps run here too, per take, and the encoder has no LUT."""
     g = G.settings(seg.get("grade") or project.get("grade"))
     fr = {**(project.get("frame") or {}), **(seg.get("frame") or {})}
+    if seg.get("keys"):   # keyframes: the frame moves (zoom, pan, turn) along the take
+        fr.update(key_frame(seg["keys"], t))
     framed = G.apply_frame(frame, fr, out_w, out_h)
     img = G.vignette(np.clip(G.detail(framed, g), 0, 1), g, uv)
     return G.color(img, g) if own else img
@@ -389,8 +404,8 @@ def render(project, out, draft=False):
                     return 0
                 return write(p, img)
             emit.j = 0
-            for frame in src:
-                pending.append(pool.submit(process, frame, project, seg, out_w, out_h, uv, own))
+            for fi, frame in enumerate(src):
+                pending.append(pool.submit(process, frame, project, seg, out_w, out_h, uv, own, fi / float(fps)))
                 if len(pending) >= 6:
                     done += emit(pending.pop(0).result())
                     if done % 50 == 0:  # progress inside a long segment too (one-take projects jumped 0 → 100 %)

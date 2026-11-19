@@ -152,6 +152,20 @@ async function run(label, viewport, scale) {
   await shot("8-frame");
   await page.click("text=Показать целиком"); await page.waitForTimeout(100);
   await shot("9-fit");
+  // ключевые кадры: ключ в начале, в другом месте другой размер → второй ключ, между ними — плавно
+  await ed(() => window.__ed.seek(0.3)); await page.waitForTimeout(150);
+  await page.click('.keys [data-key="add"]');
+  await ed(() => window.__ed.seek(2.1)); await page.waitForTimeout(150);
+  await page.locator('input[aria-label="Размер"]').fill("2.4"); await page.waitForTimeout(100);
+  const kk = await ed(() => { const c = window.__ed.P.clips[0]; return { n: c.keys?.length, mid: window.__ed.frameAt(c, 1.2).scale, a: c.keys?.[0]?.scale, b: c.keys?.[1]?.scale }; });
+  ok(kk.n === 2 && kk.b === 2.4 && kk.mid > kk.a && kk.mid < kk.b, `ключевые кадры: 2 ключа, между ними размер плавно растёт (${kk.a} → ${kk.mid?.toFixed(2)} → ${kk.b})`);
+  ok(await page.locator(".clip").first().locator(".kf").count() === 2 && await ed(() => window.__ed.job().timeline[0].keys?.length === 2), "ключи видны ◆ на клипе и уходят сборщику");
+  await shot("9k-keys");
+  await page.click('.keys [aria-label="Предыдущий ключ"]'); await page.waitForTimeout(100);
+  ok(Math.abs(await ed(() => window.__ed.t) - 0.3) < 0.05, "◀ — к предыдущему ключу" + " " + JSON.stringify(await ed(() => ({ t: window.__ed.t, keys: window.__ed.P.clips[0].keys }))));
+  await page.click('.keys [data-key="del"]');
+  ok(await ed(() => window.__ed.P.clips[0].keys?.length) === 1, "«Убрать ключ»");
+  await ed(() => { delete window.__ed.P.clips[0].keys; window.__ed.seek(1); });
   await page.click(".panel-head >> text=Готово");
   // маска
   await tool("mask"); await page.click(".tiles >> text=Круг");
