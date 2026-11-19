@@ -293,12 +293,14 @@ def output_size(project, info):
     return 2160, 3840  # landscape source → 9:16 at 4K height
 
 
-def process(frame, project, seg, out_w, out_h, uv):
-    """Frame → detail → vignette (here); the colour steps run in the encoder as the baked LUT."""
-    g = G.settings(project.get("grade"))
+def process(frame, project, seg, out_w, out_h, uv, own=False):
+    """Frame → detail → vignette (here); the colour steps run in the encoder as the baked LUT.
+    own: some take has its own colour (seg["grade"]) — then the colour steps run here too, per take, and the encoder has no LUT."""
+    g = G.settings(seg.get("grade") or project.get("grade"))
     fr = {**(project.get("frame") or {}), **(seg.get("frame") or {})}
     framed = G.apply_frame(frame, fr, out_w, out_h)
-    return G.vignette(np.clip(G.detail(framed, g), 0, 1), g, uv)
+    img = G.vignette(np.clip(G.detail(framed, g), 0, 1), g, uv)
+    return G.color(img, g) if own else img
 
 
 def render(project, out, draft=False):
@@ -320,7 +322,8 @@ def render(project, out, draft=False):
     # dissolve: the last k frames of a take are blended with the first k of the next — the film is k frames shorter
     xk = [round(float(s.get("xfade") or 0) * fps) if i < len(segs) - 1 else 0 for i, s in enumerate(segs)]
     total = sum(round(seg_len(s) * fps) for s in segs) - sum(xk)
-    vf = f"lut3d=file='{cube}':interp=tetrahedral,scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
+    own = any(s.get("grade") for s in segs)   # a take with its own colour: colour per frame in process(), no LUT in the encoder
+    vf = ("" if own else f"lut3d=file='{cube}':interp=tetrahedral,") + "scale=in_range=pc:out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
     sub_in, vmap = [], ["-map", "0:v", "-vf", vf]
     layer = dict(project.get("subs") or {})
     ovs = []
@@ -387,7 +390,7 @@ def render(project, out, draft=False):
                 return write(p, img)
             emit.j = 0
             for frame in src:
-                pending.append(pool.submit(process, frame, project, seg, out_w, out_h, uv))
+                pending.append(pool.submit(process, frame, project, seg, out_w, out_h, uv, own))
                 if len(pending) >= 6:
                     done += emit(pending.pop(0).result())
                     if done % 50 == 0:  # progress inside a long segment too (one-take projects jumped 0 → 100 %)

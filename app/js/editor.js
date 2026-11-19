@@ -52,6 +52,8 @@ export async function openEditor(P, onExit) {
     }
     return null;
   }
+  // цвет клипа: свой (clip.grade) или общий цвет ролика
+  const gradeOf = (c) => (c && c.grade) || P.grade;
   // наплыв в момент time: { i — первый клип, b — второй, w — доля второго, localB — время от начала второго }
   function mixAt(time) {
     const { starts } = clipStarts(P.clips);
@@ -137,11 +139,11 @@ export async function openEditor(P, onExit) {
   const tools = h("nav.tools", {},
     tool("quick", "magic", "Быстро", () => openPanel("quick")), tool("media", "plus", "Медиа", addMedia), tool("clip", "crop", "Клип", pickClip),
     tool("text", "type", "Текст", () => openPanel("text")), tool("subs", "text", "Субтитры", () => openPanel("subs")), tool("sound", "sound", "Звук", () => openPanel("sound")), tool("overlay", "layers", "Наложение", () => openPanel("overlay")),
-    tool("color", "color", "Цвет", () => openPanel("color")), tool("cloud", "cloud", "Облако", () => openPanel("cloud")));
+    tool("color", "color", "Цвет", () => { colorScope = 0; openPanel("color"); }), tool("cloud", "cloud", "Облако", () => openPanel("cloud")));
   const clipBar = h("nav.tools.clipbar", { hidden: true },
     tool("back", "back", "Назад", unselect), tool("c-split", "split", "Разрезать", split),
     tool("speed", "speed", "Скорость", () => openPanel("speed")), tool("frame", "crop", "Кадр", () => openPanel("frame")), tool("mask", "mask", "Маска", () => openPanel("mask")),
-    tool("transition", "transition", "Переход", clipTransition), tool("c-dup", "copy", "Копия", duplicate), tool("color", "color", "Цвет", () => openPanel("color")), tool("c-delete", "trash", "Удалить", remove));
+    tool("transition", "transition", "Переход", clipTransition), tool("c-dup", "copy", "Копия", duplicate), tool("color", "color", "Цвет", () => { colorScope = 1; openPanel("color"); }), tool("c-delete", "trash", "Удалить", remove));
   const CLIP_PANELS = new Set(["frame", "speed", "mask", "transition"]);
   const acts = h("div.acts", {}, h("button.round.act", { "data-tool": "split", onclick: split, "aria-label": "Разрезать" }, icon("split", 20)), h("button.round.act.act-del", { "data-tool": "delete", onclick: remove, "aria-label": "Удалить" }, icon("trash", 18)));
   const ed = h("div.ed", {},
@@ -329,8 +331,8 @@ export async function openEditor(P, onExit) {
     // наплыв: второй клип смешивается с первым (его видео играет одновременно)
     const mx = loc && mixAt(t), eb = mx && mx.i === loc.i ? mixEl(mx) : null;
     const mix = eb && eb.ok ? { video: eb.v, sw: eb.w, sh: eb.h, fr: mx.b.frame, frame: playing && eb.v.__mt != null ? eb.v.__f : null, w: mx.w } : null;
-    if (fz) R.draw(fz.canvas, rec.w, rec.h, out(), loc.clip.frame, P.grade, fz.timestamp, mix);
-    else if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, P.grade, playing && rec.rvfc ? rec.v.__f : null, mix);
+    if (fz) R.draw(fz.canvas, rec.w, rec.h, out(), loc.clip.frame, gradeOf(loc.clip), fz.timestamp, mix);
+    else if (rec && rec.ok) R.draw(rec.v, rec.w, rec.h, out(), loc.clip.frame, gradeOf(loc.clip), playing && rec.rvfc ? rec.v.__f : null, mix);
     else R.draw(null);
     const a1 = q();
     const c2 = over.getContext("2d");
@@ -1062,7 +1064,7 @@ export async function openEditor(P, onExit) {
     const tot = total();
     track.replaceChildren(...P.clips.map((c) => {
       const el = h("div.clip" + (c.id === sel ? ".sel" : "") + (vids.has(c.media) ? "" : ".missing"), { "data-id": c.id, style: { width: len(c) * pps + "px", marginRight: -ovl(P.clips.indexOf(c)) * pps + "px" } },
-        h("canvas"), h("span.clip-len", {}, fmtTime(len(c), true)),
+        h("canvas"), h("span.clip-len", {}, fmtTime(len(c), true)), c.grade ? h("span.clip-cc", { title: "Свой цвет" }, "◐") : null,
         vids.has(c.media) ? null : h("span.clip-note", {}, "нет копии на устройстве"),
         h("div.grip.l", { "data-side": "l" }), h("div.grip.r", { "data-side": "r" }));
       paint(el, c);
@@ -1228,7 +1230,7 @@ export async function openEditor(P, onExit) {
     if (!loc || loc.local < MIN_LEN || len(loc.clip) - loc.local < MIN_LEN) return toast("Поставьте линию туда, где нужно разрезать");
     begin(); pause();
     const c = loc.clip, cut = srcAt(c, loc.local);
-    const b = { ...c, id: uid(), in: cut, frame: c.frame && { ...c.frame }, ...(c.mask ? { mask: { ...c.mask } } : {}) };
+    const b = { ...c, id: uid(), in: cut, frame: c.frame && { ...c.frame }, ...(c.grade ? { grade: JSON.parse(JSON.stringify(c.grade)) } : {}), ...(c.mask ? { mask: { ...c.mask } } : {}) };
     if (c.curve) { const [ca, cb] = splitCurve(c.curve, (cut - c.in) / (c.out - c.in)); c.curve = ca; b.curve = cb; }   // кривая делится вместе с клипом
     c.out = cut; delete c.tr;   // стык справа (и его переход) теперь у правой половины
     P.clips.splice(loc.i + 1, 0, b);
@@ -1291,7 +1293,7 @@ export async function openEditor(P, onExit) {
     const reset = () => { begin(); inp.value = def; set(def); val.textContent = show(def); draw(); save(); };
     return h("label.sl", {}, h("span.sl-top", {}, h("span", {}, label), h("button.sl-reset", { onclick: (e) => { e.preventDefault(); reset(); }, title: "Сбросить" }, val)), inp);
   }
-  let colorTab = 0, band = 0;
+  let colorTab = 0, band = 0, colorScope = 0;   // colorScope: 0 — весь ролик, 1 — выбранный клип
   // «Мои» в каждой вкладке: что сохранить и как применить (служебные поля — время, файл, слой — не трогаем)
   const strip = (o, keys) => { if (!o) return null; const r = { ...o }; for (const k of keys) delete r[k]; return r; };
   const OWN = ["id", "start", "end", "layer", "from", "media", "audio", "image", "img", "key", "kind", "src", "name", "text"];
@@ -1299,7 +1301,8 @@ export async function openEditor(P, onExit) {
     const c = target(), apply = (fn) => (d) => { begin(); fn(d); layout(); renderPanel(); draw(); save(); };
     const find = (list, id) => list.find((x) => x.id === id);
     switch (p) {
-      case "color": return ["color", () => (Object.keys(P.grade || {}).length ? { grade: P.grade, look: P.look || null } : null), apply((d) => { P.grade = d.grade || {}; if (d.look) P.look = d.look; else delete P.look; })];
+      case "color": { const S = colorScope === 1 && c ? c : P, g0 = S.grade || P.grade;
+        return ["color", () => (Object.keys(g0 || {}).length ? { grade: g0, look: (S.grade ? S.look : P.look) || null } : null), apply((d) => { S.grade = d.grade || {}; if (d.look) S.look = d.look; else delete S.look; })]; }
       case "frame": return c && ["frame", () => c.frame || null, apply((d) => { c.frame = d; })];
       case "mask": return c && ["mask", () => (c.mask && c.mask.shape !== "none" ? c.mask : null), apply((d) => { c.mask = d; })];
       case "speed": return c && ["speed", () => (c.curve || c.speed ? { speed: c.speed || null, curve: c.curve || null } : null), apply((d) => { delete c.speed; delete c.curve; if (d.curve) c.curve = d.curve; else if (d.speed) c.speed = d.speed; })];
@@ -1342,25 +1345,34 @@ export async function openEditor(P, onExit) {
         slider("Вверх — вниз", () => fr().y, (v) => fr().y = v),
         slider("Поворот", () => fr().rot, (v) => fr().rot = v, { min: -180, max: 180, step: 0.5, show: (v) => Math.round(v) + "°" }));
     } else if (panel === "color") {
-      const g = P.grade, tabs = ["Пресеты", ...GROUPS.map((x) => x[0]), "Оттенки"];
+      // что красим: весь ролик (P.grade) или только этот клип (clip.grade — появляется при первой правке)
+      const cc = target(), own = colorScope === 1 && cc, S = own ? cc : P;
+      if (own && locate(t)?.clip !== cc) { const ci = P.clips.indexOf(cc); t = startOf(ci) + Math.min(0.05, len(cc) / 2); requestAnimationFrame(() => seek(t)); }   // показать тот клип, который красим
+      const cur = () => S.grade || P.grade, look = own ? (cc.grade ? cc.look : P.look) : P.look;
+      const g = new Proxy({}, { get: (_, k) => cur()[k], set: (_, k, v) => { if (own && !cc.grade) { cc.grade = JSON.parse(JSON.stringify(P.grade)); if (P.look) cc.look = { ...P.look }; layout(); } S.grade[k] = v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : v; return true; }, has: (_, k) => k in cur() });
+      const tabs = ["Пресеты", ...GROUPS.map((x) => x[0]), "Оттенки"];
+      const scope = cc ? h("div.seg.cscope", {}, ["Весь ролик", "Этот клип"].map((n, i) => h("button" + (colorScope === i ? ".on" : ""), { onclick: () => { colorScope = i; renderPanel(); } }, n))) : null;
       let body;
       if (colorTab === 0) {
-        const lk = P.look && LOOKS.find((x) => x[0] === P.look.id);
-        const apply = (id, k) => { const L = LOOKS.find((x) => x[0] === id); P.look = { id, k }; P.grade = scaleLook(L[2], k); draw(); };
-        body = [h("div.looks", {}, favSort("look", LOOKS).map(([id, name]) => h("button" + (P.look?.id === id || (!P.look && id === "natural") ? ".on" : ""), { "data-look": id, onclick: () => { begin(); apply(id, P.look?.k ?? 1); renderPanel(); save(); } },
+        const lk = look && LOOKS.find((x) => x[0] === look.id);
+        const apply = (id, k) => { const L = LOOKS.find((x) => x[0] === id); S.look = { id, k }; S.grade = scaleLook(L[2], k); if (own) layout(); draw(); };
+        body = [h("div.looks", {}, favSort("look", LOOKS).map(([id, name]) => h("button" + (look?.id === id || (!look && id === "natural") ? ".on" : ""), { "data-look": id, onclick: () => { begin(); apply(id, look?.k ?? 1); renderPanel(); save(); } },
             h("img", { alt: "" }), h("span", {}, name), id !== "natural" && favStar("look", id, renderPanel)))),
-          lk && lk[0] !== "natural" ? slider("Сила пресета", () => P.look.k, (v) => apply(P.look.id, v), { min: 0, max: 1.5, def: 1, show: (v) => Math.round(v * 100) + " %" }) : null,
+          lk && lk[0] !== "natural" ? slider("Сила пресета", () => S.look.k, (v) => apply(S.look.id, v), { min: 0, max: 1.5, def: 1, show: (v) => Math.round(v * 100) + " %" }) : null,
           h("p.hint", {}, "Пресет ставит ползунки во вкладках «Свет», «Цвет», «Детали» — их можно подправить после.")].filter(Boolean);
         requestAnimationFrame(lookThumbs);
       } else if (colorTab <= GROUPS.length) body = GROUPS[colorTab - 1][1].map(([k, label, min]) => slider(label, () => g[k] ?? GRADE_DEFAULT[k], (v) => g[k] = v, { min: min ?? -1 }));
       else {
         const b = HSL_BANDS[band], arr = () => ((g.hsl ||= {})[b] ||= [0, 0, 0]);
         body = [h("div.bands", {}, BAND_COLORS.map((col, i) => h("button" + (i === band ? ".on" : ""), { style: { background: col }, "aria-label": "Цвет " + (i + 1), onclick: () => { band = i; renderPanel(); } }))),
-          ...["Тон", "Насыщенность", "Светлота"].map((label, i) => slider(label, () => (g.hsl?.[b] || [0, 0, 0])[i], (v) => arr()[i] = v))];
+          ...["Тон", "Насыщенность", "Светлота"].map((label, i) => slider(label, () => (cur().hsl?.[b] || [0, 0, 0])[i], (v) => { g.hsl = g.hsl || {}; arr()[i] = v; }))];
       }
-      side.replaceChildren(head("Цвет", () => { begin(); P.grade = {}; delete P.look; renderPanel(); draw(); save(); }),
+      // «Сбросить»: у ролика — без цвета; у клипа — снова как у ролика
+      side.replaceChildren(head("Цвет", () => { begin(); if (own) { delete cc.grade; delete cc.look; layout(); } else { P.grade = {}; delete P.look; } renderPanel(); draw(); save(); }),
+        scope,
         h("div.seg.scroll", {}, tabs.map((n, i) => h("button" + (i === colorTab ? ".on" : ""), { onclick: () => { colorTab = i; renderPanel(); } }, n))),
-        h("div.sliders", {}, body), h("p.hint", {}, "Цвет применяется ко всему ролику. Нажмите на число, чтобы вернуть ноль."));
+        h("div.sliders", {}, body), h("p.hint", {}, own ? (cc.grade ? "У этого клипа свой цвет; остальные — по цвету ролика. «Сбросить» вернёт ему цвет ролика." : "Сейчас клип в цвете ролика. Любая правка здесь даст ему свой цвет.")
+          : "Цвет всего ролика. У клипов со своим цветом (значок ◐ на дорожке) — их цвет. Нажмите на число, чтобы вернуть ноль."));
     } else if (panel === "subs") {
       if (!P.subs) {
         return side.replaceChildren(head("Субтитры"),

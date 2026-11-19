@@ -331,3 +331,5 @@ textarea.txt { font-size: 17px; }
 .mine .chip { flex: none; min-height: 32px; font-size: 13px; white-space: nowrap; }
 .mine-c { background: var(--s2); } .mine-x { margin-left: 6px; color: var(--muted); padding: 0 2px; }
 .mine-add { color: var(--accent); background: none; border: 1px dashed var(--s3); } .mine-add:disabled { opacity: .4; }
+.cscope { margin-bottom: 8px; }
+.clip-cc { position: absolute; right: 6px; bottom: 4px; font-size: 13px; line-height: 18px; padding: 0 5px; border-radius: 6px; background: rgba(0,0,0,.55); color: #ffd60a; pointer-events: none; }

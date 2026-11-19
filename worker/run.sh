@@ -49,7 +49,7 @@ for l in sys.stdin:
       python3 - "$first" > work/project.json <<'PY'
 import json, sys
 print(json.dumps({"id": "selftest", "name": "selftest", "output": {"w": 2160, "h": 3840}, "clips": {"a": {"file": sys.argv[1]}},
-                  "timeline": [{"clip": "a", "in": 1.0, "out": 2.0, "xfade": 0.3, "frame": {"scale": 1.2, "rot": 3}}, {"clip": "a", "in": 3.0, "out": 4.0, "map": [[0, 0], [0.5, 0.5], [1, 0.75]]}],
+                  "timeline": [{"clip": "a", "in": 1.0, "out": 2.0, "xfade": 0.3, "frame": {"scale": 1.2, "rot": 3}}, {"clip": "a", "in": 3.0, "out": 4.0, "grade": {"saturation": -0.6, "contrast": 0.3}, "map": [[0, 0], [0.5, 0.5], [1, 0.75]]}],
                   "grade": {"exposure": 0.2, "contrast": 0.2, "clarity": 0.3, "vignette": -0.3, "saturation": 0.1}, "audio": {"volume": 1},
                   "overlays": [{"kind": "video", "clip": "a", "from": 0.5, "start": 0.2, "end": 1.8, "x": 0.68, "y": 0.3, "scale": 0.45, "radius": 0.2, "in": "pop", "mask": {"shape": "ellipse", "w": 0.95, "h": 0.95, "feather": 0.1}}],
                   "subs": {"style": {"in": "letters", "hl": "fill", "glow": 0.4}, "masks": [{"shape": "ellipse", "w": 0.95, "h": 0.8, "feather": 0.1, "start": 0, "end": 1}], "clouds": [{"start": 0.2, "end": 1.8, "x": 0.5, "y": 0.72, "w": 0.9, "h": 0.2, "a": 0.6}], "lines": [{"start": 0.1, "end": 1.9, "words": [{"text": "Проверка", "start": 0.1, "end": 0.9}, {"text": "субтитров", "start": 0.9, "end": 1.8}]}]}}, ensure_ascii=False))

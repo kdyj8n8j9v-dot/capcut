@@ -107,6 +107,7 @@ async function run(label, viewport, scale) {
   await page.waitForTimeout(300);
   const p0 = await px();
   await tool("color");
+  if (await page.locator(".cscope").count()) { await page.click(".cscope >> text=Весь ролик"); await ed(() => window.__ed.seek(1)); await page.waitForTimeout(300); }   // из строки клипа «Цвет» открывается для клипа (и встаёт на него)
   await page.waitForSelector(".looks button img[src^='data:']", { timeout: 8000 });
   ok(await page.locator(".looks button").count() >= 12, "пресеты цвета с превью на своём кадре");
   await page.click(".looks button[data-look=cinema]"); await page.waitForTimeout(150);
@@ -129,6 +130,18 @@ async function run(label, viewport, scale) {
   await page.click('.mine-c[data-my="Мой тёплый"]'); await page.waitForTimeout(150);
   ok(await ed(() => window.__ed.P.grade.exposure) === exp0 && await page.evaluate(() => JSON.parse(localStorage.getItem("studio.my")).color.length === 1), "«Мои»: сохранённый цвет применяется одним нажатием (есть во всех видео)");
   await shot("7m-mine");
+  // свой цвет у клипа: «Этот клип» — правка только у него, у ролика цвет прежний
+  const gAll = await ed(() => JSON.stringify(window.__ed.P.grade));
+  await page.click(".cscope >> text=Этот клип");
+  await page.click(".panel .seg.scroll >> text=Свет"); await page.locator('input[aria-label="Контраст"]').fill("-0.7"); await page.waitForTimeout(150);
+  ok(await ed(() => window.__ed.P.clips.some((c) => c.grade && c.grade.contrast === -0.7)) && await ed(() => JSON.stringify(window.__ed.P.grade)) === gAll, "свой цвет у клипа: меняется только он, цвет ролика прежний");
+  ok(await page.locator(".clip .clip-cc").count() === 1 && await ed(() => window.__ed.job().timeline.some((x) => x.grade && x.grade.contrast === -0.7)), "значок ◐ на клипе, сборщику уходит цвет клипа");
+  await shot("7n-clipcolor");
+  await page.click(".panel-head >> text=Сбросить");
+  ok(await ed(() => !window.__ed.P.clips.some((c) => c.grade)), "«Сбросить» возвращает клипу цвет ролика");
+  await page.click(".cscope >> text=Весь ролик");
+  if (await page.locator("nav.clipbar:not([hidden])").count()) await page.click("nav.clipbar [data-tool=back]");
+  await ed(() => window.__ed.seek(1));
   await page.click(".panel .seg >> text=Оттенки"); await page.waitForSelector(".bands");
   await page.click(".panel .seg >> text=Детали");
   await page.locator('input[aria-label="Чёткость"]').fill("0.6"); await page.locator('input[aria-label="Резкость"]').fill("0.5");

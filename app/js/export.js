@@ -25,7 +25,7 @@ export function buildJob(P, out, req) {
   return {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
-    timeline: P.clips.map((c, i) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(overlapAfter(P.clips, i) > 0 ? { xfade: r3(overlapAfter(P.clips, i)) } : {}), ...(c.curve ? { map: curveMap(c) } : c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}) })),
+    timeline: P.clips.map((c, i) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(overlapAfter(P.clips, i) > 0 ? { xfade: r3(overlapAfter(P.clips, i)) } : {}), ...(c.curve ? { map: curveMap(c) } : c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}), ...(c.grade ? { grade: c.grade } : {}) })),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1, ...(P.voice || {}) },
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),
