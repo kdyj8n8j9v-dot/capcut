@@ -17,6 +17,7 @@ export function buildJob(P, out, req) {
   const used = [...new Set([...P.clips.map((c) => c.media), ...ovs.filter((o) => o.kind === "video").map((o) => o.media)])];
   const style = normStyle(P.subs?.style), lines = [...(P.subs?.on ? buildLines(P.clips, P.words || {}, style) : []), ...textLines(P.texts)];   // субтитры + титры
   const clouds = (P.clouds || []).filter((c) => c.start < dur).map(({ id, ...c }) => ({ ...c, start: r3(c.start), end: r3(Math.min(c.end, dur)) }));
+  const effects = (P.effects || []).filter((f) => f.start < dur).map(({ id, ...f }) => ({ ...f, start: r3(f.start), end: r3(Math.min(f.end, dur)) }));
   const masks = []; P.clips.forEach((c, i) => { if (c.mask && c.mask.shape && c.mask.shape !== "none") masks.push({ ...c.mask, start: r3(starts[i]), end: r3(starts[i] + clipLen(c)) }); });
   // переходы-рисунки поверх видео; наплыв — смешение самих клипов: его собирает render.py (xfade у клипа)
   const trs = []; P.clips.forEach((c, i) => { if (c.tr && c.tr.kind !== "none" && c.tr.kind !== "dissolve" && i < P.clips.length - 1) trs.push({ at: r3(starts[i + 1]), kind: c.tr.kind, dur: c.tr.dur || 0.5 }); });
@@ -26,7 +27,8 @@ export function buildJob(P, out, req) {
   return {
     id: req, name: safe(P.name), output: { w: out.w, h: out.h },
     clips: Object.fromEntries(used.map((k) => [k, { file: "#" + k }])),
-    timeline: P.clips.map((c, i) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(overlapAfter(P.clips, i) > 0 ? { xfade: r3(overlapAfter(P.clips, i)) } : {}), ...(c.curve ? { map: curveMap(c) } : c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}), ...(c.grade ? { grade: c.grade } : {}), ...(c.keys?.length ? { keys: keysForJob(c) } : {}) })),
+    timeline: P.clips.map((c, i) => ({ clip: c.media, in: r3(c.in), out: r3(c.out), ...(overlapAfter(P.clips, i) > 0 ? { xfade: r3(overlapAfter(P.clips, i)) } : {}), ...(c.curve ? { map: curveMap(c) } : c.speed && c.speed !== 1 ? { speed: c.speed } : {}), ...(c.frame ? { frame: c.frame } : {}), ...(c.grade ? { grade: c.grade } : {}), ...(c.keys?.length ? { keys: keysForJob(c) } : {}), ...(c.mute ? { mute: true } : c.volume != null && c.volume !== 1 ? { volume: c.volume } : {}) })),
+    ...(effects.length ? { effects } : {}),
     grade: P.grade || {}, audio: { volume: P.volume ?? 1, ...(P.voice || {}) },
     ...((P.sounds || []).length ? { sounds: P.sounds.filter((x) => x.start < dur && P.audios?.[x.audio]?.path).map(({ id, audio, layer, ...x }) => ({ ...x, path: P.audios[audio].path, start: r3(x.start), end: r3(Math.min(x.end, dur)), from: r3(x.from || 0) })) } : {}),
     ...(ovs.length ? { overlays: ovs.map(({ id, media, image, ...o }) => ({ ...o, start: r3(o.start), end: r3(Math.min(o.end, dur)),

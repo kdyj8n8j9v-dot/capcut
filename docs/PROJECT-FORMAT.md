@@ -62,7 +62,8 @@ python3 scripts/project.py push project.json    # положить готовы�
 ```
 id, name, created, updated, by ("app" | "claude"), format, volume, duration
 media:  { <ключ>: { name, dur, w, h } }            ключ = первые 16 знаков sha256 имени файла (NFC)
-clips:  [ { id, media: <ключ>, in, out, speed? (0,25–4), frame?, mask? } ]
+clips:  [ { id, media: <ключ>, in, out, speed? (0,25–4), curve?, frame?, keys?, mask?, tr?, grade?, look?,
+            volume? (0–2, громкость клипа), mute? } ]
 voice:  { rumble, denoise, deess, mud, body, pres, air, comp, leveler, dehum, lufs }   обработка голоса (render.py audio_chain)
 grade:  { … }
 words:  { <ключ>: [ { text, start, end, em?, br?, nb?, ls?, ws? } ] }   слова во времени исходника
@@ -72,7 +73,9 @@ subs:   { on, style }
 clouds: [ { id, start, end, x, y, w, h, a, soft, color, fade } ]
 overlays: [ { id, kind: "image"|"video", image?|media?, from? (видео: секунда в исходнике), start, end, layer,
               x, y (центр, доли кадра), scale (ширина в долях кадра), rot, opacity, radius, flip,
-              in, inDur, out, outDur, loop, mask? } ]          варианты анимаций — OV_IN / OV_OUT / OV_LOOP в app/js/overlays.mjs
+              in, inDur, out, outDur, loop, mask?, keys?, blend? } ]   варианты анимаций — OV_IN / OV_OUT / OV_LOOP в app/js/overlays.mjs;
+              blend — режим смешивания (screen, add, lighten, multiply, darken, overlay, difference; BLENDS в app/js/effects.mjs)
+effects:  [ { id, kind, start, end, amount } ]   эффекты: flash, out, in, vignette, grain, leak, bars, shake, zoom (EFFECTS в app/js/effects.mjs)
 texts:    [ { id, text (\n — новая строка), start, end, layer, style } ]   титры; style — как у субтитров (SUB_DEFAULT, TEXT_DEFAULT)
 sounds:   [ { id, audio: <ключ>, from, start, end, layer, volume, fadeIn, fadeOut, duck } ]   музыка и звуки
 audios:   { <ключ>: { name, dur, path } }           path — файл в MEGA, как у картинок

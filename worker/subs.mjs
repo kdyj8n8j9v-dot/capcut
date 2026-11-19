@@ -7,17 +7,26 @@ import { fileURLToPath } from "url";
 import { createCanvas, loadImage, GlobalFonts } from "@napi-rs/canvas";
 import { drawSubs, drawClouds, drawMaskCached, drawTransitions, band, FONTS } from "../app/js/subs.mjs";
 import { drawOverlays } from "../app/js/overlays.mjs";
+import { drawEffects, blendModes, blendGroups, drawBlend, blendOf } from "../app/js/effects.mjs";
 
 const [, , proj, out, fpsS, Ws, Hs, Ns] = process.argv;
 const W = +Ws, H = +Hs, N = +Ns, [fn, fd] = fpsS.split("/").map(Number), fps = fn / (fd || 1);
-const { style, lines = [], fonts, clouds = [], masks = [], overlays = [], transitions = [] } = JSON.parse(fs.readFileSync(proj, "utf8")).subs;
+const { style, lines = [], fonts, clouds = [], masks = [], overlays = [], transitions = [], effects = [] } = JSON.parse(fs.readFileSync(proj, "utf8")).subs;
 for (const f of fonts || []) if (f.file && fs.existsSync(f.file)) GlobalFonts.registerFromPath(f.file, f.name);   // свой шрифт владельца из MEGA
 for (const [name, file] of Object.entries(FONTS)) GlobalFonts.registerFromPath(fileURLToPath(new URL("../app/fonts/" + file, import.meta.url)), name);
-const b = masks.length || overlays.length || transitions.length ? { y: 0, h: H } : band(W, H, style, lines, clouds);   // маска и наложения — весь кадр
+const b = masks.length || overlays.length || transitions.length || effects.length ? { y: 0, h: H } : band(W, H, style, lines, clouds);   // маска и наложения — весь кадр
 const cv = createCanvas(W, b.h), ctx = cv.getContext("2d");
 const ff = spawn("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${W}x${b.h}`, "-r", fpsS, "-i", "-", "-c:v", "qtrle", "-pix_fmt", "argb", out], { stdio: ["pipe", "inherit", "inherit"] });
 const done = new Promise((res, rej) => ff.on("close", (c) => c ? rej(new Error("ffmpeg " + c)) : res()));
 const blank = Buffer.alloc(W * b.h * 4);
+const normal = overlays.filter((o) => !blendOf(o.blend));
+// смешивание: по слою на режим, весь кадр, без прозрачности (залит нейтральным цветом режима) — render.py смешивает его с видео (ffmpeg blend)
+const modes = blendModes(overlays, effects), bl = modes.map((m) => {
+  const c = createCanvas(W, H), x = c.getContext("2d"), f = out.replace(/\.mov$/, "") + ".blend-" + m + ".mov";
+  const p = spawn("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${W}x${H}`, "-r", fpsS, "-i", "-", "-c:v", "qtrle", "-pix_fmt", "rgb24", f], { stdio: ["pipe", "inherit", "inherit"] });
+  drawBlend(x, W, H, 0, m, null);
+  return { m, f, c, x, p, done: new Promise((res, rej) => p.on("close", (k) => k ? rej(new Error("ffmpeg " + k)) : res())), empty: Buffer.from(x.getImageData(0, 0, W, H).data.buffer) };
+});
 
 // ——— источники наложений: картинки целиком, видео — кадр за кадром из ffmpeg (размер — как на экране)
 class Frames {
@@ -60,15 +69,25 @@ for (let n = 0; n < N; n++) {
     if (on && f && !(await f.next())) { f.close(); o.dead = true; srcs.set(o, null); }   // видео не читается — без него
     if (!on && f && n / fps >= o.end) { f.close(); srcs.set(o, null); }
   }
-  const cO = drawOverlays(ctx, W, H, n / fps, overlays, (o) => { const s = ovSrc(o); return s && s.src ? s.src : s; }, make);
+  const src = (o) => { const s = ovSrc(o); return s && s.src ? s.src : s; };
+  const groups = blendGroups(n / fps, overlays, effects);
+  for (const L of bl) {
+    const g = groups.get(L.m), img = g ? (drawBlend(L.x, W, H, n / fps, L.m, g, (list) => drawOverlays(L.x, W, H, n / fps, list, src, make)), Buffer.from(L.x.getImageData(0, 0, W, H).data.buffer)) : L.empty;
+    if (!L.p.stdin.write(img)) await new Promise((r) => L.p.stdin.once("drain", r));
+  }
+  const cO = drawOverlays(ctx, W, H, n / fps, normal, src, make);
   const cT = drawTransitions(ctx, W, H, n / fps, transitions);   // переход закрывает видео и наложения, но не текст
-  const c1 = drawClouds(ctx, W, H, n / fps, clouds), c2 = drawSubs(ctx, W, H, n / fps, lines, style), any = c0 || cO || cT || c1 || c2;
+  const cE = drawEffects(ctx, W, H, n / fps, effects, make, true);   // виньетка, зерно, полосы — под текстом
+  const c1 = drawClouds(ctx, W, H, n / fps, clouds), c2 = drawSubs(ctx, W, H, n / fps, lines, style);
+  const cF = drawEffects(ctx, W, H, n / fps, effects, make, false), any = c0 || cO || cT || cE || c1 || c2 || cF;   // вспышка, затемнение — поверх всего
   ctx.restore();
   const buf = any ? Buffer.from(ctx.getImageData(0, 0, W, b.h).data.buffer) : blank;
   if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once("drain", r));
 }
 ff.stdin.end();
+for (const L of bl) L.p.stdin.end();
 for (const f of srcs.values()) if (f && f.close) f.close();   // видео-наложения, которые шли до конца ролика
 await done;
-console.log(JSON.stringify(b));
+for (const L of bl) await L.done;
+console.log(JSON.stringify({ ...b, blend: bl.map((L) => ({ mode: blendOf(L.m)[3], file: L.f })) }));
 process.exit(0);   // ничего не должно держать сборку

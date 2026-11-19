@@ -10,6 +10,7 @@ from rgb48 (16-bit) decode; the encoder gets rgb48 and writes yuv422p10le, Main 
 """
 import argparse
 import json
+import math
 import subprocess
 import sys
 import time
@@ -201,12 +202,13 @@ def voice_makeup(c):
 def build_audio(project, out_wav):
     segs, inputs, parts = project["timeline"], [], []
     clips = project["clips"]
-    vol = 1.0  # per segment: unity; volume, fades and the voice chain run once on the joined track (audio_chain)
+    # per take: its own volume (clip «Громкость», 0 = no sound); the film's volume, fades and the voice chain run once on the joined track
     fmt = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
     for i, s in enumerate(segs):
         path = clip_path(clips[s["clip"]])
         inputs += ["-i", str(path)]
         d = seg_len(s)
+        vol = 0.0 if s.get("mute") else float(s.get("volume", 1.0))
         if has_audio(path) and s.get("map"):   # speed curve: short pieces, each at its own tempo, joined
             m, k = s["map"], 12
             step = max(1, (len(m) - 1) // k)
@@ -219,7 +221,7 @@ def build_audio(project, out_wav):
                 parts.append(f"[{i}:a]atrim={s['in'] + s0:.6f}:{s['in'] + s1:.6f},asetpts=PTS-STARTPTS,{fmt},{atempo(tempo)}[c{i}_{j}]")
                 pieces.append(f"[c{i}_{j}]")
             parts.append("".join(pieces) + f"concat=n={len(pieces)}:v=0:a=1,atrim=0:{d:.6f},apad=whole_dur={d:.6f},"
-                         f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE}[a{i}]")
+                         f"afade=t=in:d={FADE},afade=t=out:st={max(0, d - FADE):.6f}:d={FADE},volume={vol:.4f}[a{i}]")
         elif has_audio(path):
             parts.append(f"[{i}:a]atrim={s['in']:.6f}:{s['out']:.6f},asetpts=PTS-STARTPTS,{fmt},"
                          + (atempo(spd(s)) + "," if spd(s) != 1 else "") +
@@ -306,13 +308,38 @@ def key_frame(keys, t):
     return dict(zip(names, keys[-1][1:]))
 
 
-def process(frame, project, seg, out_w, out_h, uv, own=False, t=0.0):
+def fx_frame(fx, t):
+    """«Тряска» and «Наезд-рывок» (app/js/effects.mjs fxFrame): scale factor, x/y shift (frame parts), rotation (degrees)"""
+    s, x, y, r = 1.0, 0.0, 0.0, 0.0
+    ss = lambda u: (lambda v: v * v * (3 - 2 * v))(min(1.0, max(0.0, u)))
+    for f in fx or []:
+        if not (f["start"] <= t < f["end"]):
+            continue
+        a, u = float(f.get("amount", 1)), (t - f["start"]) / max(0.05, f["end"] - f["start"])
+        if f["kind"] == "shake":
+            e = min(1.0, max(0.0, min(1.0, (t - f["start"]) / 0.12, (f["end"] - t) / 0.12))) * a
+            w = 2 * math.pi
+            x += e * 0.022 * (math.sin(w * 7.3 * t) + 0.5 * math.sin(w * 13.1 * t + 1.3))
+            y += e * 0.016 * (math.sin(w * 6.1 * t + 0.4) + 0.5 * math.sin(w * 11.7 * t + 2.1))
+            r += e * 1.2 * math.sin(w * 4.3 * t + 0.7)
+            s *= 1 + 0.07 * e
+        elif f["kind"] == "zoom":
+            s *= 1 + 0.18 * a * (ss(u / 0.2) if u < 0.2 else 1 - ss((u - 0.2) / 0.8))
+    return s, x, y, r
+
+
+def process(frame, project, seg, out_w, out_h, uv, own=False, t=0.0, tg=0.0):
     """Frame → detail → vignette (here); the colour steps run in the encoder as the baked LUT.
     own: some take has its own colour (seg["grade"]) — then the colour steps run here too, per take, and the encoder has no LUT."""
     g = G.settings(seg.get("grade") or project.get("grade"))
     fr = {**(project.get("frame") or {}), **(seg.get("frame") or {})}
     if seg.get("keys"):   # keyframes: the frame moves (zoom, pan, turn) along the take
         fr.update(key_frame(seg["keys"], t))
+    if project.get("effects"):   # shake / zoom effects on the film's timeline (tg — seconds from the film's start)
+        fs, fx, fy, frr = fx_frame(project["effects"], tg)
+        if fs != 1 or fx or fy or frr:
+            fr = {**fr, "scale": float(fr.get("scale", 1) or 1) * fs, "x": float(fr.get("x", 0) or 0) + fx,
+                  "y": float(fr.get("y", 0) or 0) + fy, "rot": float(fr.get("rot", 0) or 0) + frr}
     framed = G.apply_frame(frame, fr, out_w, out_h)
     img = G.vignette(np.clip(G.detail(framed, g), 0, 1), g, uv)
     return G.color(img, g) if own else img
@@ -353,7 +380,9 @@ def render(project, out, draft=False):
         ovs.append(o)
     if ovs:
         layer["overlays"] = ovs
-    if layer.get("lines") or layer.get("clouds") or layer.get("masks") or layer.get("overlays") or layer.get("transitions"):
+    if project.get("effects"):
+        layer["effects"] = project["effects"]
+    if layer.get("lines") or layer.get("clouds") or layer.get("masks") or layer.get("overlays") or layer.get("transitions") or layer.get("effects"):
         # subtitles: the app's own drawing code renders a transparent strip (worker/subs.mjs); it is laid over the graded
         # picture already in 10-bit 4:2:2, so the grade never touches the text and the video stays 10-bit
         sub = work / "subs.mov"
@@ -363,7 +392,16 @@ def render(project, out, draft=False):
                             str(out_w), str(out_h), str(total)], capture_output=True, text=True, check=True)
         band = json.loads(r.stdout.strip().splitlines()[-1])
         sub_in = ["-i", str(sub)]
-        vmap = ["-filter_complex", f"[0:v]{vf}[v];[2:v]scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuva422p10le[s];"
+        # blend modes (app/js/effects.mjs): one opaque layer per mode, filled with the mode's neutral colour; mixed with the
+        # graded picture in RGB before it becomes 10-bit YUV (same formulas as the preview's CSS mix-blend-mode), under the text layer
+        lut = vf.split("scale=")[0]
+        chain, cur = [f"[0:v]{lut}format=gbrp16le[c0]"], "[c0]"
+        for k, b in enumerate(band.get("blend") or []):
+            sub_in += ["-i", b["file"]]
+            chain.append(f"[{3 + k}:v]format=gbrp16le[b{k}];{cur}[b{k}]blend=all_mode={b['mode']}[c{k + 1}]")
+            cur = f"[c{k + 1}]"
+        chain.append(f"{cur}scale=" + vf.split("scale=", 1)[1] + "[v]")
+        vmap = ["-filter_complex", ";".join(chain) + ";[2:v]scale=in_range=pc:out_color_matrix=bt709:out_range=tv,format=yuva422p10le[s];"
                                    f"[v][s]overlay=0:{band['y']}:format=yuv422p10:eof_action=pass[o]", "-map", "[o]"]
     enc = ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb48le", "-s", f"{out_w}x{out_h}",
            "-r", str(fps), "-i", "-", "-i", str(wav), *sub_in, *vmap, "-map", "1:a",
@@ -392,6 +430,7 @@ def render(project, out, draft=False):
             if draft:
                 src = (f[::2, ::2] for f in src)
             pending, j, new_tail = [], 0, []
+            g0 = sum(round(seg_len(x) * fps) - xk[q] for q, x in enumerate(segs[:si]))   # first frame of this take in the film
 
             def emit(img):
                 nonlocal_j = emit.j
@@ -405,7 +444,7 @@ def render(project, out, draft=False):
                 return write(p, img)
             emit.j = 0
             for fi, frame in enumerate(src):
-                pending.append(pool.submit(process, frame, project, seg, out_w, out_h, uv, own, fi / float(fps)))
+                pending.append(pool.submit(process, frame, project, seg, out_w, out_h, uv, own, fi / float(fps), (g0 + fi) / float(fps)))
                 if len(pending) >= 6:
                     done += emit(pending.pop(0).result())
                     if done % 50 == 0:  # progress inside a long segment too (one-take projects jumped 0 → 100 %)

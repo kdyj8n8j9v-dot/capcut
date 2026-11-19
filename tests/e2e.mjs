@@ -236,6 +236,19 @@ async function run(label, viewport, scale) {
   await page.click("nav.clipbar [data-tool=c-dup]");
   ok(await ed(() => window.__ed.P.clips.length) === nC + 1, "«Копия» клипа");
   await page.click('[aria-label="Отменить"]');
+  ok(!(await page.locator("nav.clipbar [data-tool=c-split], nav.clipbar [data-tool=c-delete]").count()), "в строке клипа нет повторов «Разрезать» и «Удалить» (они у ▶)");
+  // громкость клипа: прямо в строке клипа
+  if (!(await page.locator("nav.clipbar:not([hidden])").count())) await page.locator(".tl-track .clip").nth(1).click();
+  await page.click("nav.clipbar [data-tool=cvol]");
+  await page.locator('.panel input[aria-label="Громкость"]').fill("0.5");
+  const cv = await ed(() => { const c = window.__ed.P.clips.find((x) => x.id === window.__ed.sel), j = window.__ed.job(); return { v: c.volume, jv: j.timeline[window.__ed.P.clips.indexOf(c)].volume }; });
+  ok(cv.v === 0.5 && cv.jv === 0.5, "«Громкость» клипа: 50 %, уходит сборщику");
+  await page.click(".panel >> text=Без звука");
+  ok(await ed(() => window.__ed.job().timeline.some((s) => s.mute)), "«Без звука» у клипа");
+  await shot("9e-clipvol");
+  await page.click('[aria-label="Отменить"]');   // «Без звука» отменяется стрелкой
+  ok(await ed(() => !window.__ed.job().timeline.some((s) => s.mute)), "«Без звука» отменяется");
+  await ed(() => { for (const c of window.__ed.P.clips) delete c.volume; });
   if (await page.locator("nav.clipbar:not([hidden])").count()) await page.click("nav.clipbar [data-tool=back]");
   ok(await page.locator("nav.clipbar[hidden]").count() === 1, "«Назад» возвращает общую строку");
   // переход на стыке клипов
@@ -375,7 +388,7 @@ async function run(label, viewport, scale) {
   ok(await ed(() => window.__ed.subApi.scope()) === "all", "галочка возвращает режим «все субтитры»");
   ok(await page.locator(".sub i.ain").count() > 0, "на плашках субтитров видна длительность анимации");
   // облако — отдельный объект на своей дорожке
-  await tool("cloud"); await page.click("text=Добавить облако здесь");
+  await tool("fx"); await page.click(".fx-tiles >> text=Облако");
   ok(await ed(() => window.__ed.P.clouds.length) === 1 && await page.locator(".cl.sel").count() === 1, "облако добавляется и появляется на своей дорожке");
   await page.locator('input[aria-label="Плотность"]').fill("0.8"); await page.locator('input[aria-label="Ширина"]').fill("1.1");
   const c0 = await ed(() => ({ ...window.__ed.P.clouds[0] }));
@@ -394,7 +407,7 @@ async function run(label, viewport, scale) {
   await page.click(".guide-btn");
   ok(!(await page.locator(".guides").isVisible()), "и выключается той же кнопкой");
   // наложения: стикер из ПАК и видео поверх основного
-  await tool("overlay"); await page.click("text=Добавить наложение здесь");
+  await tool("overlay");   // одно касание — сразу выбор файла
   await page.click(".sheet .item >> text=Звезда.png");
   await page.waitForFunction(() => window.__ed.P.overlays.length === 1 && document.querySelector(".ov.sel"));
   const ov0 = await ed(() => window.__ed.P.overlays[0]);
@@ -418,6 +431,12 @@ async function run(label, viewport, scale) {
   await page.click(".panel .tabs >> text=Анимация"); await page.click(".tiles >> text=Прыжок");
   await page.click(".panel .tabs >> text=Маска"); await page.click(".panel .tiles >> text=Круг");
   ok(await ed(() => window.__ed.P.overlays[0].in === "pop" && window.__ed.P.overlays[0].mask?.shape === "ellipse"), "у наложения своя анимация и маска");
+  await page.click(".panel .tabs >> text=Вид"); await page.click(".panel .tiles >> text=Осветление"); await page.waitForTimeout(250);
+  const ob = await page.evaluate(() => { const b = document.querySelector("canvas.blend:not([hidden])"); return { m: window.__ed.P.overlays[0].blend, css: b && getComputedStyle(b).mixBlendMode, job: window.__ed.job().overlays[0].blend }; });
+  ok(ob.m === "screen" && ob.css === "screen" && ob.job === "screen", "режим смешивания наложения: «Осветление» в превью и у сборщика");
+  await shot("10l-blend");
+  await page.click(".panel .tiles >> text=Обычный");
+  ok(await ed(() => !window.__ed.P.overlays[0].blend), "и обратно «Обычный»");
   await page.evaluate(() => { const P = window.__ed.P, k = window.__ed.P.clips[0].media; window.__ed.addOverlayVideo({ key: k, ...P.media[k] }); });
   await page.waitForFunction(() => window.__ed.P.overlays.length === 2 && document.querySelectorAll(".tl-ovs .orow").length === 2, null, { timeout: 8000 });
   ok(true, "видео-наложение встало на второй этаж дорожки наложений");
@@ -428,11 +447,11 @@ async function run(label, viewport, scale) {
   const gro = await page.locator(".ov.sel .g.r").boundingBox(), oe0 = ovv.end;
   await page.mouse.move(gro.x + 5, gro.y + 10); await page.mouse.down(); await page.mouse.move(gro.x - 30, gro.y + 10, { steps: 4 }); await page.mouse.up();
   ok(await ed(() => window.__ed.P.overlays[1].end) < oe0 - 0.1, "видео-наложение укорачивается за край");
-  await page.click(".panel >> text=Удалить наложение");
+  await page.click('[data-tool="delete"]');   // удалить — корзина у ▶ (одна на всё)
   ok(await ed(() => window.__ed.P.overlays.length) === 1, "наложение удаляется");
   // титры: свой текст поверх видео
   await page.click('.panel-head >> text=Готово');
-  await tool("text"); await page.click("text=Добавить текст здесь");
+  await tool("text");   // одно касание — текст уже стоит здесь
   await page.waitForFunction(() => window.__ed.P.texts.length === 1 && document.querySelector(".tx.sel"));
   await page.fill("textarea.txt", "ЗАГОЛОВОК\nвторая строка");
   const tx0 = await ed(() => window.__ed.P.texts[0]);
@@ -457,6 +476,39 @@ async function run(label, viewport, scale) {
   ok(await ed(() => window.__ed.P.texts[0].style.in) === "type", "у титра своя анимация");
   await ed(() => window.__ed.seek(window.__ed.P.texts[0].start + 1.5)); await page.waitForTimeout(300);
   await shot("7l-text");
+  // «Копия» текста — одной кнопкой
+  await page.click(".panel-head .copy-obj");
+  ok(await ed(() => window.__ed.P.texts.length === 2 && window.__ed.P.texts[1].start > window.__ed.P.texts[0].start && window.__ed.txtSel === window.__ed.P.texts[1].id), "«Копия» текста встаёт после него и выбрана");
+  await page.click('[aria-label="Отменить"]');
+  // эффекты: касание — эффект здесь; вспышка белит кадр, тряска двигает кадр, всё уходит сборщику
+  await page.click('.panel-head >> text=Готово');
+  await ed(() => { window.__ed.pause(); window.__ed.seek(1); });
+  await tool("fx");
+  await page.click('.fx-tiles [data-fx="flash"]');
+  await page.waitForFunction(() => window.__ed.P.effects.length === 1 && document.querySelector(".fx.sel"));
+  await ed(() => window.__ed.pause());
+  const fx0 = await ed(() => window.__ed.P.effects[0]);
+  await ed(() => window.__ed.seek(window.__ed.P.effects[0].start + 0.12)); await page.waitForTimeout(250);
+  const wh = await page.evaluate(() => { const c = document.querySelector("canvas.over"), d = c.getContext("2d").getImageData(c.width >> 1, c.height >> 1, 1, 1).data; return d[0] > 240 && d[3] > 100; });
+  ok(fx0.kind === "flash" && wh, "«Вспышка» встала с места линии и белит кадр");
+  await page.click('.fx-tiles [data-fx="shake"]');
+  ok(await ed(() => window.__ed.P.effects[0].kind) === "shake", "эффект меняется касанием плитки");
+  await page.locator('.panel input[aria-label="Сила"]').fill("1.2");
+  const jf = await ed(() => window.__ed.job().effects);
+  ok(jf?.length === 1 && jf[0].kind === "shake" && jf[0].amount === 1.2, "эффект и его сила уходят сборщику");
+  await shot("7m-fx");
+  await page.click(".panel-head .copy-obj");
+  ok(await ed(() => window.__ed.P.effects.length) === 2, "«Копия» эффекта");
+  await page.click('[data-tool="delete"]');
+  ok(await ed(() => window.__ed.P.effects.length) === 1 && await page.locator(".fx-tiles [data-fx=leak]").count() === 1, "эффект удаляется, видно все эффекты");
+  await page.locator(".tl-fx .fx").first().click(); await page.click('[data-tool="fx"]');   // выбран эффект: «Эффекты» ещё раз — снова список
+  ok(await page.locator(".fx-tiles [data-fx=leak]:not(.on)").count() === 1 && !(await page.locator(".panel-head .copy-obj").count()), "«Эффекты» при выбранном эффекте — снова все эффекты");
+  await page.click('.fx-tiles [data-fx="leak"]'); await ed(() => window.__ed.pause());
+  await ed(() => window.__ed.seek(window.__ed.P.effects[1].start + 1)); await page.waitForTimeout(250);
+  const bl = await page.evaluate(() => { const b = document.querySelector("canvas.blend:not([hidden])"); return b && getComputedStyle(b).mixBlendMode; });
+  ok(bl === "screen", "«Блик» смешивается с видео (Осветление)");
+  await shot("7n-leak");
+  await ed(() => { window.__ed.P.effects.length = 0; window.__ed.layout(); window.__ed.seek(0); });
   // музыка и звуки
   await page.click('.panel-head >> text=Готово');
   await ed(() => window.__ed.seek(0));
@@ -588,9 +640,10 @@ async function run(label, viewport, scale) {
   ok(await page.evaluate(async () => typeof (await import("./vendor/mega.mjs")).Storage === "function"), "библиотека MEGA загружается в браузере");
   await page.close();
 }
-await run("ipad", { width: 1180, height: 820 }, 2);
-await run("iphone", { width: 390, height: 844 }, 2);
-await run("ipad-portrait", { width: 820, height: 1180 }, 1);
+const only = process.env.ONLY;   // ONLY=iphone — одно устройство
+if (!only || only === "ipad") await run("ipad", { width: 1180, height: 820 }, 2);
+if (!only || only === "iphone") await run("iphone", { width: 390, height: 844 }, 2);
+if (!only || only === "ipad-portrait") await run("ipad-portrait", { width: 820, height: 1180 }, 1);
 await browser.close();
 console.log(failed ? `НЕ ПРОШЛО: ${failed}` : "всё прошло");
 process.exit(failed ? 1 : 0);
